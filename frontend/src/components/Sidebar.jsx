@@ -69,7 +69,7 @@ export default function Sidebar({ activeView, onNavigate, stats }) {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="user-profile" onClick={logout} title="Logout">
+        <div className="user-profile" onClick={() => onNavigate('profile')} title="View Profile" style={{ cursor: 'pointer' }}>
           <div className="avatar">{user?.username?.charAt(0).toUpperCase()}</div>
           <div className="username-container">
             <span className="username">{user?.username}</span>

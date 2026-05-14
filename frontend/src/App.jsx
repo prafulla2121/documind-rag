@@ -2,10 +2,12 @@ import { useState, useEffect } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatWindow from './components/ChatWindow';
 import UploadPanel from './components/UploadPanel';
+import ProfileView from './components/ProfileView';
 import Auth from './components/Auth';
 import { getStats } from './lib/api';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ChatProvider, useChat } from './context/ChatContext';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 
 function MainApp() {
   const [activeView, setActiveView] = useState('chat');
@@ -45,16 +47,22 @@ function MainApp() {
       />
       {activeView === 'chat' && <ChatWindow />}
       {activeView === 'upload' && <UploadPanel onUploadComplete={fetchStats} />}
+      {activeView === 'profile' && <ProfileView />}
     </div>
   );
 }
 
 export default function App() {
+  // Use a default client ID if not provided in environment for demo purposes
+  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "1234567890-mockclientid.apps.googleusercontent.com";
+  
   return (
-    <AuthProvider>
-      <ChatProvider>
-        <MainApp />
-      </ChatProvider>
-    </AuthProvider>
+    <GoogleOAuthProvider clientId={clientId}>
+      <AuthProvider>
+        <ChatProvider>
+          <MainApp />
+        </ChatProvider>
+      </AuthProvider>
+    </GoogleOAuthProvider>
   );
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { GoogleLogin } from '@react-oauth/google';
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -7,7 +8,7 @@ export default function Auth() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, register } = useAuth();
+  const { login, register, loginWithGoogle } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -62,6 +63,27 @@ export default function Auth() {
             {loading ? 'Please wait...' : (isLogin ? 'Sign In' : 'Sign Up')}
           </button>
         </form>
+        
+        <div className="auth-divider">
+          <span>OR</span>
+        </div>
+
+        <div className="google-login-wrapper">
+          <GoogleLogin
+            onSuccess={credentialResponse => {
+              setError('');
+              loginWithGoogle(credentialResponse.credential).catch(err => {
+                setError(err.message || "Google login failed.");
+              });
+            }}
+            onError={() => {
+              setError("Google login failed.");
+            }}
+            theme="outline"
+            size="large"
+            width="100%"
+          />
+        </div>
         
         <div className="auth-switch">
           {isLogin ? "Don't have an account? " : "Already have an account? "}

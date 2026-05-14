@@ -56,8 +56,16 @@ export function AuthProvider({ children }) {
     setToken(null);
   };
 
+  const loginWithGoogle = async (token) => {
+    const data = await apiCall('/auth/google-login', {
+      method: 'POST',
+      body: JSON.stringify({ token })
+    });
+    setToken(data.access_token);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, login, register, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

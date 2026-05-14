@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     # --- Auth ---
     SECRET_KEY: str = "change-in-production"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    GOOGLE_CLIENT_ID: str = ""
 
     # --- Paths ---
     DATA_DIR: str = str(PROJECT_ROOT / "data")

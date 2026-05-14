@@ -34,6 +34,7 @@ httpx==0.28.1
 # --- Auth ---
 python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4
+google-auth==2.35.0
 
 # --- Database (SQLite via SQLAlchemy) ---
 sqlalchemy==2.0.41
