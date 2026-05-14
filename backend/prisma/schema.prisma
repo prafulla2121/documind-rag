@@ -1,0 +1,68 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Document {
+  id           String   @id
+  filename     String
+  source_type  String   @default("unknown")
+  title        String   @default("")
+  num_chunks   Int      @default(0)
+  content_hash String   @default("")
+  status       String   @default("processing")
+  created_at   DateTime @default(now())
+
+  @@map("documents")
+}
+
+model ChatSession {
+  id         String   @id
+  title      String   @default("New Chat")
+  user_id    String   @default("anonymous")
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id         String   @id
+  session_id String
+  role       String
+  content    String   @db.Text
+  sources    String   @default("[]") @db.Text
+  created_at DateTime @default(now())
+
+  @@map("chat_messages")
+}
+
+model User {
+  id            String   @id
+  username      String   @unique
+  password_hash String
+  role          String   @default("user")
+  created_at    DateTime @default(now())
+
+  @@map("users")
+}
+
+model QueryLog {
+  id              Int      @id @default(autoincrement())
+  query           String   @db.Text
+  processed_query String   @default("") @db.Text
+  intent          String   @default("")
+  num_retrieved   Int      @default(0)
+  num_final       Int      @default(0)
+  answer          String   @default("") @db.Text
+  latency_ms      Int      @default(0)
+  user_id         String   @default("anonymous")
+  rating          Int      @default(0)
+  created_at      DateTime @default(now())
+
+  @@map("query_logs")
+}
