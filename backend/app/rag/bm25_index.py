@@ -29,7 +29,7 @@ class BM25Index:
             return
 
         self.doc_store = [(d["id"], d["text"], d.get("metadata", {})) for d in documents]
-        tokenized = [self._tokenize(d["text"]) for d in documents]
+        tokenized = [self._tokenize(self._search_text(d["text"], d.get("metadata", {}))) for d in documents]
         self.index = BM25Okapi(tokenized)
         self._save()
         logger.info(f"BM25 index built with {len(documents)} documents")
@@ -78,6 +78,18 @@ class BM25Index:
         text = text.lower()
         tokens = re.findall(r"\b[a-z]{2,}\b", text)
         return [t for t in tokens if t not in self.STOPWORDS]
+
+    def _search_text(self, text: str, metadata: dict) -> str:
+        """Blend source metadata into sparse search without changing answer context."""
+        metadata_parts = [
+            metadata.get("title", ""),
+            metadata.get("filename", ""),
+            metadata.get("video_title", ""),
+            metadata.get("channel_name", ""),
+            metadata.get("source_type", ""),
+        ]
+        title_boost = " ".join(part for part in metadata_parts if part)
+        return f"{title_boost}\n{title_boost}\n{text}"
 
     def _save(self):
         try:

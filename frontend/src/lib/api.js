@@ -119,13 +119,69 @@ export async function uploadMultipleFiles(files) {
   return res.json();
 }
 
-export async function ingestUrl(url) {
+export async function ingestUrl(url, options = {}) {
   const res = await fetch(`${API_BASE}/ingest/url`, {
     method: 'POST',
     headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({
+      url,
+      crawl: Boolean(options.crawl),
+      max_pages: options.maxPages || 10,
+    }),
   });
-  if (!res.ok) throw new Error(`URL Ingest failed: ${res.statusText}`);
+  if (!res.ok) {
+    let message = res.statusText || 'URL ingest failed';
+    try {
+      const data = await res.json();
+      message = data.detail || message;
+    } catch {
+      // Keep the HTTP status text if the backend did not return JSON.
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+export async function ingestSitemap(url, maxPages = 50) {
+  const res = await fetch(`${API_BASE}/ingest/sitemap`, {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ url, max_pages: maxPages }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || res.statusText || 'Sitemap ingest failed');
+  }
+  return res.json();
+}
+
+export async function ingestConnector(connector, url = '') {
+  const res = await fetch(`${API_BASE}/ingest/connectors`, {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ connector, url }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText || 'Connector ingest failed');
+  return data;
+}
+
+export async function ingestYouTube(url, chunker = 'sliding_window') {
+  const res = await fetch(`${API_BASE}/ingest/youtube`, {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ url, chunker }),
+  });
+  if (!res.ok) {
+    let message = res.statusText || 'YouTube ingest failed';
+    try {
+      const data = await res.json();
+      message = data.detail || message;
+    } catch {
+      // Keep the HTTP status text if the backend did not return JSON.
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 
@@ -145,6 +201,27 @@ export async function getDocuments() {
     headers: getAuthHeaders()
   });
   if (!res.ok) throw new Error(`Failed to get documents: ${res.statusText}`);
+  return res.json();
+}
+
+export async function deleteDocument(docId) {
+  const res = await fetch(`${API_BASE}/ingest/documents/${docId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) throw new Error(`Failed to delete document: ${res.statusText}`);
+  return res.json();
+}
+
+export async function reindexDocument(docId) {
+  const res = await fetch(`${API_BASE}/ingest/documents/${docId}/reindex`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || res.statusText || 'Failed to re-index document');
+  }
   return res.json();
 }
 

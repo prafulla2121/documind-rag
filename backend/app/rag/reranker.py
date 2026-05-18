@@ -32,7 +32,7 @@ class Reranker:
             return []
 
         # Create (query, passage) pairs
-        pairs = [(query, doc["text"]) for doc in candidates]
+        pairs = [(query, self._rerank_text(doc)) for doc in candidates]
 
         # Score all pairs
         scores = self._model.predict(pairs, show_progress_bar=False)
@@ -46,3 +46,18 @@ class Reranker:
         logger.info(f"Reranked {len(candidates)} → top {self.top_k}")
 
         return reranked[:self.top_k]
+
+    def _rerank_text(self, doc: Dict) -> str:
+        metadata = doc.get("metadata", {})
+        metadata_prefix = "\n".join(
+            value for value in [
+                metadata.get("video_title") or metadata.get("title", ""),
+                metadata.get("channel_name", ""),
+                metadata.get("filename", ""),
+                metadata.get("source_type", ""),
+            ]
+            if value
+        )
+        if metadata_prefix:
+            return f"{metadata_prefix}\n\n{doc['text']}"
+        return doc["text"]

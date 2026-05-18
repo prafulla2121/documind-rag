@@ -2,7 +2,7 @@
 Pydantic schemas for API request/response models.
 """
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Literal, Optional, List
 from datetime import datetime
 
 
@@ -25,6 +25,13 @@ class SourceInfo(BaseModel):
     score: float = 0.0
     retrieval_methods: List[str] = []
     excerpt: str = ""
+    video_id: str = ""
+    video_title: str = ""
+    channel_name: str = ""
+    thumbnail_url: str = ""
+    start_seconds: float = 0.0
+    timestamp: str = ""
+    citation: str = ""
 
 
 class QueryResponse(BaseModel):
@@ -51,6 +58,34 @@ class IngestResponse(BaseModel):
 
 class URLIngestRequest(BaseModel):
     url: str
+    crawl: bool = False
+    max_pages: int = Field(default=10, ge=1, le=50)
+
+
+class SitemapIngestRequest(BaseModel):
+    url: str
+    max_pages: int = Field(default=50, ge=1, le=200)
+
+
+class ConnectorIngestRequest(BaseModel):
+    connector: Literal["confluence", "notion", "google_drive", "sharepoint"]
+    url: str = ""
+    access_token: str = ""
+    max_items: int = Field(default=25, ge=1, le=200)
+
+
+class YouTubeIngestRequest(BaseModel):
+    url: str
+    chunker: Literal["sliding_window", "structural", "semantic"] = "sliding_window"
+
+
+class YouTubeIngestResponse(BaseModel):
+    video_id: str
+    title: str
+    channel_name: str
+    thumbnail_url: str
+    chunk_count: int
+    already_existed: bool
 
 
 class IngestStatusResponse(BaseModel):

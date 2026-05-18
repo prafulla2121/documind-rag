@@ -9,7 +9,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { ChatProvider, useChat } from './context/ChatContext';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 
-function MainApp() {
+function MainApp({ googleEnabled = false }) {
   const [activeView, setActiveView] = useState('chat');
   const [stats, setStats] = useState(null);
   const { user, loading } = useAuth();
@@ -35,7 +35,7 @@ function MainApp() {
   }
 
   if (!user) {
-    return <Auth />;
+    return <Auth googleEnabled={googleEnabled} />;
   }
 
   return (
@@ -53,16 +53,22 @@ function MainApp() {
 }
 
 export default function App() {
-  // Use a default client ID if not provided in environment for demo purposes
-  const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || "1234567890-mockclientid.apps.googleusercontent.com";
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const app = (
+    <AuthProvider>
+      <ChatProvider>
+        <MainApp googleEnabled={Boolean(googleClientId)} />
+      </ChatProvider>
+    </AuthProvider>
+  );
+
+  if (!googleClientId) {
+    return app;
+  }
   
   return (
-    <GoogleOAuthProvider clientId={clientId}>
-      <AuthProvider>
-        <ChatProvider>
-          <MainApp />
-        </ChatProvider>
-      </AuthProvider>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      {app}
     </GoogleOAuthProvider>
   );
 }

@@ -66,3 +66,17 @@ model QueryLog {
 
   @@map("query_logs")
 }
+
+model YouTubeSource {
+  id           String   @id @default(cuid())
+  userId       String
+  videoId      String
+  title        String
+  channelName  String
+  thumbnailUrl String
+  durationSecs Int
+  ingestedAt   DateTime @default(now())
+  chunkCount   Int
+
+  @@unique([userId, videoId])
+}

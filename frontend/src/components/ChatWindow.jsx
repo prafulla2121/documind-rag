@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import MessageBubble from './MessageBubble';
+import ChatModelSelector from './ChatModelSelector';
 
 const SUGGESTIONS = [
   "What is our vacation policy?",
@@ -121,7 +122,7 @@ export default function ChatWindow() {
           <div className="input-footer">
             <button className="plus-button" title="Attach file">+</button>
             <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-               <div className="model-badge">Sonnet 4.6 ⌵</div>
+               <ChatModelSelector />
                {isLoading ? (
                 <button className="send-button-mini" onClick={cancelStreaming} title="Stop generation">
                   ■

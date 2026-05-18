@@ -1,6 +1,7 @@
 import { useAuth } from '../context/AuthContext';
 import { getStats } from '../lib/api';
 import { useState, useEffect } from 'react';
+import ModelSelector from './ModelSelector';
 
 export default function ProfileView() {
   const { user, logout } = useAuth();
@@ -56,6 +57,8 @@ export default function ProfileView() {
             </div>
           </div>
         </div>
+
+        <ModelSelector />
 
         <div className="profile-danger-zone">
           <h3>Session Management</h3>

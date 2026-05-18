@@ -11,9 +11,11 @@ from .sliding_window import Chunk, SlidingWindowChunker
 class StructuralChunker:
 
     HEADING_PATTERNS = [
-        r"^#+\s+.+$",            # Markdown headings
-        r"^[A-Z][^.!?]*:\s*$",  # Sentence-case headings ending in :
-        r"^\d+\.\s+[A-Z].+$",   # Numbered sections
+        r"^#+\s+.+$",                # Markdown headings
+        r"^[A-Z][^.!?]*:\s*$",       # Sentence-case headings ending in :
+        r"^\d+(\.\d+)*\s+[A-Z].+$",  # Numbered sections (1., 1.1, 1.1.1)
+        r"^[A-Z\s]{5,}\n?$",         # ALL CAPS HEADERS
+        r"^(Section|Chapter)\s+\d+.+$", # Section/Chapter headers
     ]
 
     def __init__(self, max_chunk_size: int = 1000, overlap: int = 50):

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { GoogleLogin } from '@react-oauth/google';
 
-export default function Auth() {
+export default function Auth({ googleEnabled = false }) {
   const [isLogin, setIsLogin] = useState(true);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -64,26 +64,30 @@ export default function Auth() {
           </button>
         </form>
         
-        <div className="auth-divider">
-          <span>OR</span>
-        </div>
+        {googleEnabled && (
+          <>
+            <div className="auth-divider">
+              <span>OR</span>
+            </div>
 
-        <div className="google-login-wrapper">
-          <GoogleLogin
-            onSuccess={credentialResponse => {
-              setError('');
-              loginWithGoogle(credentialResponse.credential).catch(err => {
-                setError(err.message || "Google login failed.");
-              });
-            }}
-            onError={() => {
-              setError("Google login failed.");
-            }}
-            theme="outline"
-            size="large"
-            width="100%"
-          />
-        </div>
+            <div className="google-login-wrapper">
+              <GoogleLogin
+                onSuccess={credentialResponse => {
+                  setError('');
+                  loginWithGoogle(credentialResponse.credential).catch(err => {
+                    setError(err.message || "Google login failed.");
+                  });
+                }}
+                onError={() => {
+                  setError("Google login failed.");
+                }}
+                theme="outline"
+                size="large"
+                width="320"
+              />
+            </div>
+          </>
+        )}
         
         <div className="auth-switch">
           {isLogin ? "Don't have an account? " : "Already have an account? "}

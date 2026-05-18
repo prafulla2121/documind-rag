@@ -1,55 +1,88 @@
 """
-In-Memory Cache — replaces Redis for no-Docker setup.
-Two-level cache: embedding cache + response cache.
+Cache Manager — hybrid caching (Redis with In-Memory fallback).
+Supports embedding caching and response caching with TTL.
 """
 import hashlib
 import json
 import time
-from typing import Optional
 import logging
+from typing import Optional, Any
+import redis.asyncio as redis
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-
 class CacheManager:
     """
-    In-memory cache with TTL support.
-    For production, replace with Redis.
+    Production-grade cache manager.
+    Uses Redis if REDIS_URL is configured, otherwise falls back to local in-memory store.
     """
     _instance = None
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            cls._store = {}
-            cls._ttls = {}
-            cls._corpus_version = 1
+            cls._instance._initialized = False
         return cls._instance
 
-    def _is_expired(self, key: str) -> bool:
-        if key in self._ttls:
-            return time.time() > self._ttls[key]
-        return False
+    def __init__(self):
+        if self._initialized:
+            return
+        
+        self.redis_url = settings.REDIS_URL
+        self.redis = None
+        self._local_store = {}
+        self._local_ttls = {}
+        self._corpus_version = 1
+        
+        if self.redis_url:
+            try:
+                self.redis = redis.from_url(self.redis_url, decode_responses=True)
+                logger.info(f"Redis cache initialized at {self.redis_url}")
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis: {e}. Falling back to in-memory.")
+                self.redis = None
+        else:
+            logger.info("No REDIS_URL configured. Using in-memory cache.")
+            
+        self._initialized = True
 
-    def _cleanup_expired(self):
-        """Remove expired entries (called periodically)."""
-        expired = [k for k in self._ttls if self._is_expired(k)]
-        for k in expired:
-            self._store.pop(k, None)
-            self._ttls.pop(k, None)
+    def _is_local_expired(self, key: str) -> bool:
+        if key in self._local_ttls:
+            return time.time() > self._local_ttls[key]
+        return False
 
     # --- Embedding Cache ---
 
     async def get_embedding(self, text: str) -> Optional[list]:
         key = f"emb:{hashlib.md5(text.encode()).hexdigest()}"
-        if key in self._store and not self._is_expired(key):
-            return self._store[key]
+        
+        if self.redis:
+            try:
+                val = await self.redis.get(key)
+                if val:
+                    return json.loads(val)
+            except Exception as e:
+                logger.warning(f"Redis get_embedding error: {e}")
+        
+        # Local fallback
+        if key in self._local_store and not self._is_local_expired(key):
+            return self._local_store[key]
         return None
 
     async def set_embedding(self, text: str, embedding: list, ttl: int = 604800):
         key = f"emb:{hashlib.md5(text.encode()).hexdigest()}"
-        self._store[key] = embedding
-        self._ttls[key] = time.time() + ttl
+        
+        if self.redis:
+            try:
+                await self.redis.setex(key, ttl, json.dumps(embedding))
+                return
+            except Exception as e:
+                logger.warning(f"Redis set_embedding error: {e}")
+        
+        # Local store
+        self._local_store[key] = embedding
+        self._local_ttls[key] = time.time() + ttl
 
     # --- Response Cache ---
 
@@ -80,14 +113,18 @@ class CacheManager:
         filters: Optional[dict] = None,
         model_id: str = "unknown",
     ) -> Optional[dict]:
-        key = self._response_cache_key(
-            query=query,
-            user_id=user_id,
-            filters=filters,
-            model_id=model_id,
-        )
-        if key in self._store and not self._is_expired(key):
-            return self._store[key]
+        key = self._response_cache_key(query, user_id, filters, model_id)
+        
+        if self.redis:
+            try:
+                val = await self.redis.get(key)
+                if val:
+                    return json.loads(val)
+            except Exception as e:
+                logger.warning(f"Redis get_response error: {e}")
+                
+        if key in self._local_store and not self._is_local_expired(key):
+            return self._local_store[key]
         return None
 
     async def set_response(
@@ -99,31 +136,45 @@ class CacheManager:
         model_id: str = "unknown",
         ttl: int = 3600,
     ):
-        key = self._response_cache_key(
-            query=query,
-            user_id=user_id,
-            filters=filters,
-            model_id=model_id,
-        )
-        if response.get("sources"):
-            self._store[key] = response
-            self._ttls[key] = time.time() + ttl
+        if not response.get("sources"):
+            return # Only cache grounded responses
+            
+        key = self._response_cache_key(query, user_id, filters, model_id)
+        
+        if self.redis:
+            try:
+                await self.redis.setex(key, ttl, json.dumps(response))
+                return
+            except Exception as e:
+                logger.warning(f"Redis set_response error: {e}")
+                
+        self._local_store[key] = response
+        self._local_ttls[key] = time.time() + ttl
 
     async def invalidate_responses(self):
         """Clear all response cache entries (call after new ingestion)."""
-        keys_to_remove = [k for k in self._store if k.startswith("resp:")]
-        for k in keys_to_remove:
-            self._store.pop(k, None)
-            self._ttls.pop(k, None)
         self._corpus_version += 1
-        logger.info(f"Invalidated {len(keys_to_remove)} cached responses")
+        
+        if self.redis:
+            try:
+                # In Redis we use versioning in the key instead of scanning for keys
+                logger.info(f"Incremented corpus version to {self._corpus_version}")
+            except Exception as e:
+                logger.warning(f"Redis invalidation error: {e}")
+        
+        keys_to_remove = [k for k in self._local_store if k.startswith("resp:")]
+        for k in keys_to_remove:
+            self._local_store.pop(k, None)
+            self._local_ttls.pop(k, None)
+        
+        logger.info("Local response cache invalidated")
 
     def get_cache_stats(self) -> dict:
-        self._cleanup_expired()
-        emb_count = sum(1 for k in self._store if k.startswith("emb:"))
-        resp_count = sum(1 for k in self._store if k.startswith("resp:"))
+        emb_count = sum(1 for k in self._local_store if k.startswith("emb:"))
+        resp_count = sum(1 for k in self._local_store if k.startswith("resp:"))
         return {
-            "embedding_cache": emb_count,
-            "response_cache": resp_count,
+            "mode": "redis" if self.redis else "in-memory",
+            "local_embedding_cache": emb_count,
+            "local_response_cache": resp_count,
             "corpus_version": self._corpus_version,
         }

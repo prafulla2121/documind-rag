@@ -13,7 +13,7 @@ from app.rag.bm25_index import BM25Index
 from app.rag.retriever import HybridRetriever
 from app.rag.reranker import Reranker
 from app.rag.context_builder import ContextBuilder
-from app.rag.llm_client import OllamaClient
+from app.rag.observability import RAGTracer
 from app.rag.pipeline import RAGPipeline
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ _vector_store: VectorStore | None = None
 _embedder: Embedder | None = None
 _bm25: BM25Index | None = None
 _cache: CacheManager | None = None
+_tracer: RAGTracer | None = None
 
 
 def get_embedder() -> Embedder:
@@ -66,6 +67,14 @@ def get_cache() -> CacheManager:
     return _cache
 
 
+def get_tracer() -> RAGTracer:
+    global _tracer
+    if _tracer is None:
+        from pathlib import Path
+        _tracer = RAGTracer(log_dir=str(Path(settings.DATA_DIR) / "logs"))
+    return _tracer
+
+
 def get_pipeline() -> RAGPipeline:
     global _pipeline
     if _pipeline is None:
@@ -78,11 +87,8 @@ def get_pipeline() -> RAGPipeline:
             retriever=HybridRetriever(vector_store, bm25, embedder),
             reranker=Reranker(top_k=settings.TOP_K_FINAL),
             context_builder=ContextBuilder(),
-            llm_client=OllamaClient(
-                base_url=settings.OLLAMA_URL,
-                model=settings.LLM_MODEL,
-            ),
             cache=get_cache(),
+            tracer=get_tracer()
         )
     return _pipeline
 
@@ -94,15 +100,22 @@ async def initialize_services():
     # Initialize database
     db = get_metadata_db()
     await db.init_db()
+    await db.seed_oauth_settings(
+        google_client_id=settings.GOOGLE_CLIENT_ID,
+        google_client_secret=settings.GOOGLE_CLIENT_SECRET,
+    )
 
-    # Ensure vector store collection exists
-    vs = get_vector_store()
-    embedder = get_embedder()
-    vs.create_collection(vector_dim=embedder.dimension)
-
+    # Heavy RAG components are initialized lazily when documents are ingested or
+    # queried, so auth and admin routes can start without downloading models.
     # Try to load BM25 index
     bm25 = get_bm25()
     try:
+        rebuilt = bm25.rebuild_from_vector_store()
+        if rebuilt:
+            logger.info(f"BM25 index rebuilt from vector store: {rebuilt} docs")
+            await get_cache().invalidate_responses()
+            logger.info("âœ… All services initialized")
+            return
         bm25._load()
         if bm25.index:
             logger.info(f"BM25 index loaded: {len(bm25.doc_store)} docs")

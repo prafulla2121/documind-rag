@@ -33,7 +33,45 @@ class QueryProcessor:
         "Legal": ["contract", "compliance", "policy", "nda", "agreement", "regulation"],
     }
 
+    async def refine_async(self, query: str, llm_provider=None) -> ProcessedQuery:
+        """
+        Asynchronously process and refine the query using an LLM if available.
+        Handles spelling corrections and expansion.
+        """
+        intent = self._detect_intent(query)
+        filters = self._extract_filters(query)
+        rewritten = self._rewrite(query)
+        
+        # If LLM is available, use it for spelling correction and normalization
+        if llm_provider:
+            try:
+                refinement_prompt = f"""
+                Rewrite the following user query to correct any spelling mistakes and make it more suitable for a semantic search engine.
+                Keep the original intent and key entities intact.
+                If the query is already perfect, just return it as is.
+                ONLY return the rewritten query text.
+                
+                Query: {query}
+                Rewritten:"""
+                
+                llm_rewritten = await llm_provider.generate([{"role": "user", "content": refinement_prompt}])
+                rewritten = llm_rewritten.strip().strip('"').strip("'")
+            except Exception:
+                pass # Fallback to basic rewrite
+                
+        expanded = self._expand_terms(rewritten)
+
+        return ProcessedQuery(
+            original=query,
+            rewritten=rewritten,
+            intent=intent,
+            filters=filters,
+            expanded_terms=expanded,
+            should_use_multi_query=(intent in ["factual", "procedural"] and len(query.split()) > 5),
+        )
+
     def process(self, query: str) -> ProcessedQuery:
+        """Synchronous version for fallback."""
         intent = self._detect_intent(query)
         filters = self._extract_filters(query)
         rewritten = self._rewrite(query)

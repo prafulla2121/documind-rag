@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from app.api.routes import query, ingest, admin, auth
+from app.api.routes import query, ingest, admin, auth, models
 from app.api.dependencies import initialize_services
 from app.core.config import settings
 
@@ -57,6 +57,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(query.router, prefix="/api/query", tags=["query"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(models.router, prefix="/api")
 
 
 @app.get("/health")
@@ -71,3 +72,7 @@ async def root():
         "version": "1.0.0",
         "docs": "/api/docs",
     }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

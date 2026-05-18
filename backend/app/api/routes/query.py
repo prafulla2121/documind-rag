@@ -8,6 +8,9 @@ import json
 from app.models.schemas import QueryRequest, QueryResponse
 from app.core.security import get_current_user
 from app.api.dependencies import get_pipeline, get_metadata_db
+from app.providers.registry import get_llm_provider
+from app.providers.base import ModelConfig
+from app.core.vault import vault
 
 router = APIRouter()
 
@@ -44,37 +47,74 @@ async def query_endpoint(
     history = await db.get_messages(session_id, current_user["id"])
     # We pass history to the pipeline to add context (need to update pipeline to use it)
 
-    if request.stream:
-        async def event_stream():
-            # Send session ID back to client first
-            yield f"data: {json.dumps({'type': 'session_id', 'data': session_id})}\n\n"
+    # Get LLM Provider from user config
+    config_dict = await db.get_user_model_config(current_user["id"])
+    if not config_dict:
+        config_dict = {
+            "provider": "ollama",
+            "model_name": "llama3",
+            "api_key": "",
+            "api_base_url": "http://localhost:11434",
+            "temperature": 0.1
+        }
+    else:
+        # Decrypt key before use
+        if config_dict.get("api_key"):
+            config_dict["api_key"] = vault.decrypt(config_dict["api_key"])
             
-            full_answer = ""
-            sources_data = []
-            async for event in pipeline.stream_query(
-                request.query,
-                current_user["id"],
-                history,
-                request.filters,
-            ):
-                if event["type"] == "token":
-                    full_answer += event["data"]
-                elif event["type"] == "sources":
-                    sources_data = event["data"]
-                    
-                yield f"data: {json.dumps(event)}\n\n"
+    provider = get_llm_provider(ModelConfig(**config_dict))
+
+    try:
+        if request.stream:
+            async def event_stream():
+                # Send session ID back to client first
+                yield f"data: {json.dumps({'type': 'session_id', 'data': session_id})}\n\n"
                 
-            # Save assistant message at the end
-            assistant_msg_id = str(uuid.uuid4())
-            await db.add_message(assistant_msg_id, session_id, "assistant", full_answer, current_user["id"], sources_data)
+                full_answer = ""
+                sources_data = []
+                try:
+                    async for event in pipeline.stream_query(
+                        user_query=request.query,
+                        llm_provider=provider,
+                        user_id=current_user["id"],
+                        history=history,
+                        filters=request.filters,
+                    ):
+                        if event["type"] == "token":
+                            full_answer += event["data"]
+                        elif event["type"] == "sources":
+                            sources_data = event["data"]
+                            
+                        yield f"data: {json.dumps(event)}\n\n"
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Streaming error: {e}")
+                    yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+                    
+                # Save assistant message at the end if we got anything
+                if full_answer:
+                    assistant_msg_id = str(uuid.uuid4())
+                    await db.add_message(assistant_msg_id, session_id, "assistant", full_answer, current_user["id"], sources_data)
 
-        return StreamingResponse(
-            event_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        result = await pipeline.query(
+            user_query=request.query,
+            llm_provider=provider,
+            user_id=current_user["id"],
+            history=history,
+            filters=request.filters
         )
-
-    result = await pipeline.query(request.query, current_user["id"], history, request.filters)
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Query error: {e}")
+        raise HTTPException(500, f"Error connecting to AI model: {str(e)}")
     
     # Add session_id to result
     result["session_id"] = session_id

@@ -5,26 +5,22 @@ Zero-cost auth using python-jose + passlib.
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-import bcrypt
+from passlib.context import CryptContext
 from datetime import datetime, timedelta
 from app.core.config import settings
+
+# Using pbkdf2_sha256 to avoid bcrypt version conflicts on some systems
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 def hash_password(password: str) -> str:
-    # bcrypt requires bytes
-    pwd_bytes = password.encode('utf-8')
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(pwd_bytes, salt)
-    return hashed.decode('utf-8')
+    return pwd_context.hash(password)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
-    except Exception:
-        return False
+    return pwd_context.verify(plain, hashed)
 
 
 def create_token(user_id: str, username: str, role: str = "user") -> str:

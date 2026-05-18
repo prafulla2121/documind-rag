@@ -1,9 +1,24 @@
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useMemo, useState } from 'react';
+import SourceCitation from './SourceCitation';
 
 export default function MessageBubble({ message, isLoading }) {
   const isUser = message.role === 'user';
   const isStreaming = !isUser && isLoading && message.content === '';
   const [selectedSource, setSelectedSource] = useState(null);
+  
+  const content = message.content || '';
+  const displayContent = useMemo(() => {
+    if (isUser) return content;
+    return content
+      .replace(/\s*\[https?:\/\/(?:www\.)?(?:youtu\.be|youtube\.com)\/[^\]]+\]/gi, '')
+      .replace(/\s*\(https?:\/\/(?:www\.)?(?:youtu\.be|youtube\.com)\/[^\)]+\)/gi, '')
+      .replace(/\s*https?:\/\/(?:www\.)?(?:youtu\.be|youtube\.com)\/\S+/gi, '')
+      .replace(/Source Summary:\s*(?:\n\s*[-*]\s*DOCUMENT\s*\d+\s*)+/gi, '')
+      .trim();
+  }, [content, isUser]);
+
   const avgScore = useMemo(() => {
     if (!message.sources?.length) return 0;
     return message.sources.reduce((acc, source) => acc + (source.score || 0), 0) / message.sources.length;
@@ -36,12 +51,10 @@ export default function MessageBubble({ message, isLoading }) {
                 </span>
               </div>
             ) : (
-              <div>
-                {message.content || (
-                  <span style={{ color: '#999', fontStyle: 'italic' }}>
-                    RagSystem is thinking...
-                  </span>
-                )}
+              <div className="markdown-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {displayContent || "RagSystem is thinking..."}
+                </ReactMarkdown>
               </div>
             )}
             {!isUser && (
@@ -53,16 +66,17 @@ export default function MessageBubble({ message, isLoading }) {
             {/* Sources styled as Claude-style Artifact Cards */}
             {!isUser && message.sources && message.sources.length > 0 && (
               <div className="sources-area">
+                <div className="sources-heading">Sources</div>
                 {message.sources.map((source, idx) => (
-                  <button key={idx} className="source-card" onClick={() => setSelectedSource(source)}>
-                    <div className="source-card-icon">📄</div>
+                  <div key={idx} className="source-card" onClick={() => setSelectedSource(source)} role="button" tabIndex={0}>
+                    <div className="source-card-icon">{source.source_type === 'youtube' ? 'YT' : 'DOC'}</div>
                     <div className="source-card-info">
-                      <div className="source-card-name">
-                        {source.title && !source.title.match(/^[0-9a-f-]{36}$/) ? source.title : (source.filename || 'Source Document')}
+                      <SourceCitation source={source} />
+                      <div className="source-card-type">
+                        {source.source_type === 'youtube' ? (source.channel_name || 'YouTube transcript') : 'Knowledge Base Source'}
                       </div>
-                      <div className="source-card-type">Knowledge Base Source</div>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -76,6 +90,19 @@ export default function MessageBubble({ message, isLoading }) {
                   <span>Type: {selectedSource.source_type || 'unknown'}</span>
                   <span>Score: {(selectedSource.score || 0).toFixed(3)}</span>
                 </div>
+                {selectedSource.source_type === 'youtube' && (
+                  <div className="youtube-detail-preview">
+                    {selectedSource.thumbnail_url && <img src={selectedSource.thumbnail_url} alt="" />}
+                    <div>
+                      <div>{selectedSource.channel_name || 'YouTube transcript'}</div>
+                      {selectedSource.url && (
+                        <a href={selectedSource.url} target="_blank" rel="noreferrer">
+                          Open at {selectedSource.timestamp || '0:00'}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {selectedSource.section && (
                   <div className="source-detail-section">Section: {selectedSource.section}</div>
                 )}

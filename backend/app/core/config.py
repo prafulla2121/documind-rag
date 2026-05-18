@@ -4,6 +4,7 @@ All settings can be overridden via .env file or environment variables.
 """
 from pydantic_settings import BaseSettings
 from pathlib import Path
+from typing import Optional, Any
 import os
 
 # Resolve .env path relative to the project root
@@ -36,24 +37,38 @@ class Settings(BaseSettings):
 
     # --- Auth ---
     SECRET_KEY: str = "change-in-production"
+    ENCRYPTION_KEY: str = "your-symmetric-encryption-key-here"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
 
     # --- Paths ---
     DATA_DIR: str = str(PROJECT_ROOT / "data")
     UPLOAD_DIR: str = str(PROJECT_ROOT / "data" / "uploads")
     BM25_INDEX_PATH: str = str(PROJECT_ROOT / "data" / "bm25_index.pkl")
     SQLITE_DB_PATH: str = str(PROJECT_ROOT / "data" / "metadata.db")
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:1234@localhost:5432/RagSytem"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:1234@localhost:5432/RagSystem"
 
     # --- Server ---
     BACKEND_PORT: int = 8000
     FRONTEND_PORT: int = 5173
+    REDIS_URL: Optional[str] = None
 
     @property
     def async_db_url(self) -> str:
         """Return the database URL with the asyncpg driver, stripping unsupported params."""
         url = self.DATABASE_URL
+        
+        # Handle SQLite relative paths
+        if url.startswith("sqlite"):
+            if "///./" in url:
+                # Resolve ./ relative to PROJECT_ROOT
+                url = url.replace("///./", f"///{PROJECT_ROOT}/", 1)
+            elif "///../" in url:
+                # Resolve ../ relative to PROJECT_ROOT
+                url = url.replace("///../", f"///{PROJECT_ROOT.parent}/", 1)
+            return url
+
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         
@@ -71,9 +86,40 @@ class Settings(BaseSettings):
     class Config:
         env_file = str(ENV_FILE)
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 settings = Settings()
+
+
+def _resolve_project_path(value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str(PROJECT_ROOT / path)
+
+
+def _prefer_existing_qdrant_path(value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+
+    project_path = PROJECT_ROOT / path
+    legacy_backend_path = PROJECT_ROOT / "backend" / path
+    collection_name = settings.QDRANT_COLLECTION
+
+    project_has_collection = (project_path / "collection" / collection_name).exists()
+    legacy_has_collection = (legacy_backend_path / "collection" / collection_name).exists()
+    if legacy_has_collection and not project_has_collection:
+        return str(legacy_backend_path)
+    return str(project_path)
+
+
+settings.DATA_DIR = _resolve_project_path(settings.DATA_DIR)
+settings.UPLOAD_DIR = _resolve_project_path(settings.UPLOAD_DIR)
+settings.BM25_INDEX_PATH = _resolve_project_path(settings.BM25_INDEX_PATH)
+settings.SQLITE_DB_PATH = _resolve_project_path(settings.SQLITE_DB_PATH)
+settings.QDRANT_PATH = _prefer_existing_qdrant_path(settings.QDRANT_PATH)
 
 # Ensure data directories exist
 os.makedirs(settings.DATA_DIR, exist_ok=True)

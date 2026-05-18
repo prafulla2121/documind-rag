@@ -11,12 +11,13 @@ from app.rag.query_processor import QueryProcessor
 from app.rag.retriever import HybridRetriever
 from app.rag.reranker import Reranker
 from app.rag.context_builder import ContextBuilder
-from app.rag.llm_client import OllamaClient
+from app.providers.base import BaseLLMProvider
 from app.rag.prompts import (
     RAG_SYSTEM_PROMPT, RAG_QUERY_TEMPLATE,
     FALLBACK_RESPONSE, CHITCHAT_RESPONSE,
 )
 from app.storage.cache import CacheManager
+from app.rag.observability import RAGTracer, RAGEvaluator
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -30,19 +31,22 @@ class RAGPipeline:
         retriever: HybridRetriever,
         reranker: Reranker,
         context_builder: ContextBuilder,
-        llm_client: OllamaClient,
         cache: CacheManager,
+        tracer: RAGTracer = None,
+        evaluator: RAGEvaluator = None,
     ):
         self.query_processor = query_processor
         self.retriever = retriever
         self.reranker = reranker
         self.context_builder = context_builder
-        self.llm = llm_client
         self.cache = cache
+        self.tracer = tracer or RAGTracer()
+        self.evaluator = evaluator
 
     async def query(
         self,
         user_query: str,
+        llm_provider: BaseLLMProvider,
         user_id: str = "anonymous",
         history: list = None,
         filters: dict | None = None,
@@ -64,9 +68,9 @@ class RAGPipeline:
             return {**cached, "from_cache": True}
         stage_timings["cache_lookup_ms"] = int((time.time() - stage_start) * 1000)
 
-        # 1. Process query
+        # 1. Process and Refine query (correct spelling, normalize)
         stage_start = time.time()
-        processed = self.query_processor.process(user_query)
+        processed = await self.query_processor.refine_async(user_query, llm_provider)
         stage_timings["query_processing_ms"] = int((time.time() - stage_start) * 1000)
 
         # Bail early for chitchat
@@ -90,9 +94,9 @@ class RAGPipeline:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
 
-        candidates = self.retriever.retrieve(
-            query=processed.rewritten,
-            top_k=10,
+        candidates = self._retrieve_candidates(
+            original_query=user_query,
+            rewritten_query=processed.rewritten,
             filters=search_filters,
         )
         stage_timings["retrieval_ms"] = int((time.time() - stage_start) * 1000)
@@ -128,11 +132,12 @@ class RAGPipeline:
         if history_context:
             prompt = f"PREVIOUS CHAT HISTORY:\n{history_context}\n\n{prompt}"
 
-        answer = await self.llm.generate(
-            prompt=prompt,
-            system_prompt=RAG_SYSTEM_PROMPT,
-            temperature=0.1,
-        )
+        messages = [
+            {"role": "system", "content": RAG_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ]
+
+        answer = await llm_provider.generate(messages)
         stage_timings["generation_ms"] = int((time.time() - stage_start) * 1000)
 
         result = {
@@ -156,11 +161,29 @@ class RAGPipeline:
             model_id=settings.LLM_MODEL,
         )
 
+        # 7. Trace and Evaluate
+        if self.tracer:
+            # We don't have a session_id in the pipeline yet, usually passed from route
+            # For now we'll assume the caller logs to DB, but we log trace for analytics
+            self.tracer.log_trace(
+                session_id="local_trace",
+                user_id=user_id,
+                query=user_query,
+                retrieved_chunks=candidates,
+                reranked_chunks=reranked,
+                final_answer=answer,
+                latency_ms=result["latency_ms"],
+                model_used=str(llm_provider),
+                intent=processed.intent,
+                query_rewritten=processed.rewritten,
+            )
+
         return result
 
     async def stream_query(
         self,
         user_query: str,
+        llm_provider: BaseLLMProvider,
         user_id: str = "anonymous",
         history: list = None,
         filters: dict | None = None,
@@ -170,8 +193,8 @@ class RAGPipeline:
         history_context = self._format_history(history)
 
         yield {"type": "phase", "data": "analyzing_query"}
-        # 1. Process query
-        processed = self.query_processor.process(user_query)
+        # 1. Process and Refine query
+        processed = await self.query_processor.refine_async(user_query, llm_provider)
 
         if processed.intent == "chitchat":
             yield {"type": "sources", "data": []}
@@ -186,9 +209,9 @@ class RAGPipeline:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
 
-        candidates = self.retriever.retrieve(
-            query=processed.rewritten,
-            top_k=10,
+        candidates = self._retrieve_candidates(
+            original_query=user_query,
+            rewritten_query=processed.rewritten,
             filters=search_filters,
         )
 
@@ -215,8 +238,30 @@ class RAGPipeline:
         if history_context:
             prompt = f"PREVIOUS CHAT HISTORY:\n{history_context}\n\n{prompt}"
 
-        async for token in self.llm.stream_generate(prompt, RAG_SYSTEM_PROMPT):
+        messages = [
+            {"role": "system", "content": RAG_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt}
+        ]
+
+        full_answer = ""
+        async for token in llm_provider.stream(messages):
+            full_answer += token
             yield {"type": "token", "data": token}
+
+        # Trace streaming result
+        if self.tracer:
+            self.tracer.log_trace(
+                session_id="local_stream_trace",
+                user_id=user_id,
+                query=user_query,
+                retrieved_chunks=candidates,
+                reranked_chunks=reranked,
+                final_answer=full_answer,
+                latency_ms=0, # Latency for streaming is handled differently, usually ttft or total time
+                model_used=str(llm_provider),
+                intent=processed.intent,
+                query_rewritten=processed.rewritten,
+            )
 
         yield {"type": "done", "data": None}
         
@@ -235,3 +280,28 @@ class RAGPipeline:
                 formatted.append(f"{role}: {content}")
                 
         return "\n".join(formatted)
+
+    def _retrieve_candidates(
+        self,
+        original_query: str,
+        rewritten_query: str,
+        filters: dict | None = None,
+    ) -> list:
+        """Retrieve against both original and rewritten query text, then merge."""
+        queries = [original_query.strip()]
+        if rewritten_query and rewritten_query.strip() and rewritten_query.strip() not in queries:
+            queries.append(rewritten_query.strip())
+
+        merged = {}
+        top_k = max(settings.TOP_K_DENSE, settings.TOP_K_SPARSE, settings.TOP_K_FINAL, 10)
+        for query in queries:
+            for doc in self.retriever.retrieve(query=query, top_k=top_k, filters=filters):
+                existing = merged.get(doc["id"])
+                if not existing:
+                    merged[doc["id"]] = doc
+                    continue
+                existing["rrf_score"] = max(existing.get("rrf_score", 0), doc.get("rrf_score", 0))
+                methods = set(existing.get("retrieval_methods", [])) | set(doc.get("retrieval_methods", []))
+                existing["retrieval_methods"] = sorted(methods)
+
+        return sorted(merged.values(), key=lambda item: item.get("rrf_score", 0), reverse=True)[:top_k]

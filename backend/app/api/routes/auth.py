@@ -62,7 +62,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: MetadataDB
 
 @router.get("/me")
 async def read_users_me(current_user: dict = Depends(get_current_user)):
-    return {"id": current_user["id"], "username": current_user["username"]}
+    return {
+        "id": current_user.get("id"),
+        "username": current_user.get("username", "Anonymous"),
+        "role": current_user.get("role", "user")
+    }
 
 
 @router.post("/google-login", response_model=Token)

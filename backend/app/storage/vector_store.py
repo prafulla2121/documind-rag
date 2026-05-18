@@ -5,7 +5,7 @@ Stores vectors on disk via qdrant_client local path mode.
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance, VectorParams,
-    PointStruct, Filter, FieldCondition, MatchValue,
+    PointStruct, Filter, FieldCondition, MatchValue, FilterSelector,
 )
 from typing import List, Optional
 import uuid
@@ -54,21 +54,29 @@ class VectorStore:
         points = []
         for chunk, embedding in zip(chunks, embeddings):
             metadata = chunk.metadata if hasattr(chunk, "metadata") else {}
+            payload = {
+                **metadata,
+                "text": chunk.text if hasattr(chunk, "text") else str(chunk),
+                "source_url": metadata.get("source_url", ""),
+                "source_type": metadata.get("source_type", ""),
+                "title": metadata.get("title", ""),
+                "section_heading": metadata.get("section_heading", ""),
+                "chunk_index": chunk.chunk_index if hasattr(chunk, "chunk_index") else metadata.get("chunk_index", 0),
+                "chunk_method": metadata.get("chunk_method", ""),
+                "doc_id": metadata.get("doc_id", ""),
+                "filename": metadata.get("filename", ""),
+                "user_id": metadata.get("user_id", "anonymous"),
+                "video_id": metadata.get("video_id", ""),
+                "video_title": metadata.get("video_title", ""),
+                "channel_name": metadata.get("channel_name", ""),
+                "start_seconds": metadata.get("start_seconds", 0),
+                "duration_seconds": metadata.get("duration_seconds", 0),
+                "thumbnail_url": metadata.get("thumbnail_url", ""),
+            }
             points.append(PointStruct(
                 id=str(uuid.uuid4()),
                 vector=embedding,
-                payload={
-                    "text": chunk.text if hasattr(chunk, "text") else str(chunk),
-                    "source_url": metadata.get("source_url", ""),
-                    "source_type": metadata.get("source_type", ""),
-                    "title": metadata.get("title", ""),
-                    "section_heading": metadata.get("section_heading", ""),
-                    "chunk_index": chunk.chunk_index if hasattr(chunk, "chunk_index") else 0,
-                    "chunk_method": metadata.get("chunk_method", ""),
-                    "doc_id": metadata.get("doc_id", ""),
-                    "filename": metadata.get("filename", ""),
-                    "user_id": metadata.get("user_id", "anonymous"),
-                },
+                payload=payload,
             ))
 
         batch_size = 100
@@ -103,7 +111,7 @@ class VectorStore:
                 limit=top_k,
                 query_filter=qdrant_filter,
                 with_payload=True,
-                score_threshold=0.3,
+                score_threshold=0.15,
             )
         except Exception as e:
             logger.error(f"Qdrant search error: {e}")
@@ -135,8 +143,10 @@ class VectorStore:
         """Delete all chunks for a document."""
         self.client.delete(
             collection_name=self.collection_name,
-            points_selector=Filter(
-                must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))]
+                )
             ),
         )
 
@@ -145,12 +155,16 @@ class VectorStore:
         results = []
         offset = None
         while True:
-            response = self.client.scroll(
-                collection_name=self.collection_name,
-                limit=100,
-                offset=offset,
-                with_payload=True,
-            )
+            try:
+                response = self.client.scroll(
+                    collection_name=self.collection_name,
+                    limit=100,
+                    offset=offset,
+                    with_payload=True,
+                )
+            except Exception as e:
+                logger.warning(f"Unable to scroll Qdrant collection '{self.collection_name}': {e}")
+                return results
             points, next_offset = response
             for point in points:
                 results.append({
