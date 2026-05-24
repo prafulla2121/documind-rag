@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import json
 
+from pydantic import BaseModel
 from app.models.schemas import QueryRequest, QueryResponse
 from app.core.security import get_current_user
 from app.api.dependencies import get_pipeline, get_metadata_db
@@ -14,6 +15,12 @@ from app.core.vault import vault
 
 router = APIRouter()
 
+class FeedbackRequest(BaseModel):
+    query_id: int
+    rating: int # 1 for up, -1 for down
+
+class SessionRenameRequest(BaseModel):
+    title: str
 
 @router.post("/", response_model=QueryResponse)
 async def query_endpoint(
@@ -157,4 +164,31 @@ async def delete_session(session_id: str, current_user=Depends(get_current_user)
     deleted = await db.delete_session(session_id, current_user["id"])
     if not deleted:
         raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, request: SessionRenameRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    renamed = await db.rename_session(session_id, request.title, current_user["id"])
+    if not renamed:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.post("/sessions/{session_id}/pin")
+async def toggle_pin(session_id: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    success = await db.toggle_pin_session(session_id, current_user["id"])
+    if not success:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.patch("/feedback")
+async def update_feedback(request: FeedbackRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    # Security: Verify that the query belongs to the current user
+    query = await db.get_query_log(request.query_id)
+    if not query or query.get("user_id") != current_user["id"]:
+        raise HTTPException(403, "Not authorized to rate this query")
+
+    await db.update_query_rating(request.query_id, request.rating)
     return {"status": "success"}

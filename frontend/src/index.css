@@ -14,6 +14,18 @@
   --radius-md: 8px;
   --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --card-bg: #ffffff;
+}
+
+[data-theme='dark'] {
+  --bg-color: #1a1a1a;
+  --sidebar-bg: #121212;
+  --sidebar-border: rgba(255,255,255,0.1);
+  --text-main: #e5e7eb;
+  --text-muted: #9ca3af;
+  --border-color: #374151;
+  --card-bg: #262626;
+  --accent-color: #ff8c69;
 }
 
 * {
@@ -216,7 +228,7 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background-color: #fff;
+  background-color: var(--bg-color);
 }
 
 .chat-header {
@@ -317,7 +329,7 @@ body {
 .input-wrapper {
   max-width: 800px;
   margin: 0 auto;
-  background: #fff;
+  background: var(--card-bg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 30px rgba(0,0,0,0.04);
@@ -349,6 +361,8 @@ body {
   padding: 8px 0;
   max-height: 200px;
   min-height: 24px;
+  background: transparent;
+  color: var(--text-main);
 }
 
 .input-footer {

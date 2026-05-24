@@ -36,6 +36,7 @@ class ChatSession(Base):
     id = Column(String, primary_key=True)
     title = Column(String, default="New Chat")
     user_id = Column(String, default="anonymous")
+    is_pinned = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -356,6 +357,20 @@ class MetadataDB:
             except IntegrityError:
                 await session.rollback()
 
+    async def get_query_log(self, query_id: int) -> dict | None:
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(QueryLog).where(QueryLog.id == query_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            return {
+                "id": record.id,
+                "user_id": record.user_id,
+                "rating": record.rating,
+            }
+
     async def log_query(self, query: str, intent: str, num_retrieved: int,
                         num_final: int, answer: str, latency_ms: int, user_id: str):
         async with self.async_session() as session:
@@ -411,10 +426,40 @@ class MetadataDB:
             result = await session.execute(
                 select(ChatSession)
                 .where(ChatSession.user_id == user_id)
-                .order_by(ChatSession.updated_at.desc())
+                .order_by(ChatSession.is_pinned.desc(), ChatSession.updated_at.desc())
             )
             rows = result.scalars().all()
-            return [{"id": r.id, "title": r.title, "updated_at": str(r.updated_at)} for r in rows]
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "is_pinned": bool(r.is_pinned),
+                    "updated_at": str(r.updated_at)
+                }
+                for r in rows
+            ]
+
+    async def toggle_pin_session(self, session_id: str, user_id: str = "anonymous") -> bool:
+        async with self.async_session() as session:
+            from sqlalchemy import update, select
+            result = await session.execute(
+                select(ChatSession).where(
+                    ChatSession.id == session_id,
+                    ChatSession.user_id == user_id,
+                )
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return False
+
+            new_val = 1 if not record.is_pinned else 0
+            await session.execute(
+                update(ChatSession)
+                .where(ChatSession.id == session_id)
+                .values(is_pinned=new_val)
+            )
+            await session.commit()
+            return True
 
     async def get_messages(self, session_id: str, user_id: str = "anonymous") -> list:
         async with self.async_session() as session:

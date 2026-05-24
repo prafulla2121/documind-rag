@@ -8,6 +8,7 @@ import logging
 from typing import AsyncGenerator
 
 from app.rag.query_processor import QueryProcessor
+from app.rag.query_transformer import QueryTransformer
 from app.rag.retriever import HybridRetriever
 from app.rag.reranker import Reranker
 from app.rag.context_builder import ContextBuilder
@@ -39,6 +40,7 @@ class RAGPipeline:
         self.retriever = retriever
         self.reranker = reranker
         self.context_builder = context_builder
+        self.query_transformer = QueryTransformer()
         self.cache = cache
         self.tracer = tracer or RAGTracer()
         self.evaluator = evaluator
@@ -71,6 +73,15 @@ class RAGPipeline:
         # 1. Process and Refine query (correct spelling, normalize)
         stage_start = time.time()
         processed = await self.query_processor.refine_async(user_query, llm_provider)
+
+        # 1b. Query Transformation (Multi-Query)
+        queries = [processed.rewritten]
+        try:
+            expanded = await self.query_transformer.multi_query(processed.rewritten, llm_provider)
+            queries.extend(expanded)
+        except Exception as e:
+            logger.warning(f"Query expansion failed: {e}")
+
         stage_timings["query_processing_ms"] = int((time.time() - stage_start) * 1000)
 
         # Bail early for chitchat
@@ -94,9 +105,8 @@ class RAGPipeline:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
 
-        candidates = self._retrieve_candidates(
-            original_query=user_query,
-            rewritten_query=processed.rewritten,
+        candidates = self._retrieve_candidates_multi(
+            queries=queries,
             filters=search_filters,
         )
         stage_timings["retrieval_ms"] = int((time.time() - stage_start) * 1000)
@@ -281,21 +291,18 @@ class RAGPipeline:
                 
         return "\n".join(formatted)
 
-    def _retrieve_candidates(
+    def _retrieve_candidates_multi(
         self,
-        original_query: str,
-        rewritten_query: str,
+        queries: list[str],
         filters: dict | None = None,
     ) -> list:
-        """Retrieve against both original and rewritten query text, then merge."""
-        queries = [original_query.strip()]
-        if rewritten_query and rewritten_query.strip() and rewritten_query.strip() not in queries:
-            queries.append(rewritten_query.strip())
-
+        """Retrieve against multiple query versions, then merge."""
         merged = {}
         top_k = max(settings.TOP_K_DENSE, settings.TOP_K_SPARSE, settings.TOP_K_FINAL, 10)
         for query in queries:
-            for doc in self.retriever.retrieve(query=query, top_k=top_k, filters=filters):
+            if not query.strip():
+                continue
+            for doc in self.retriever.retrieve(query=query.strip(), top_k=top_k, filters=filters):
                 existing = merged.get(doc["id"])
                 if not existing:
                     merged[doc["id"]] = doc
