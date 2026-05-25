@@ -27,6 +27,12 @@ class Token(BaseModel):
 class GoogleLoginRequest(BaseModel):
     token: str
 
+class PromptUpdateRequest(BaseModel):
+    prompt: str
+
+class RAGConfigUpdateRequest(BaseModel):
+    config: dict
+
 
 @router.post("/register", response_model=Token)
 async def register(user: UserRegister, db: MetadataDB = Depends(get_metadata_db)):
@@ -61,12 +67,26 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: MetadataDB
 
 
 @router.get("/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
+async def read_users_me(current_user: dict = Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
+    prompt = await db.get_user_custom_prompt(current_user["id"])
+    rag_config = await db.get_user_rag_config(current_user["id"])
     return {
         "id": current_user.get("id"),
         "username": current_user.get("username", "Anonymous"),
-        "role": current_user.get("role", "user")
+        "role": current_user.get("role", "user"),
+        "custom_prompt": prompt,
+        "rag_config": rag_config
     }
+
+@router.post("/me/prompt")
+async def update_my_prompt(data: PromptUpdateRequest, current_user: dict = Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
+    await db.update_user_custom_prompt(current_user["id"], data.prompt)
+    return {"status": "success"}
+
+@router.post("/me/rag-config")
+async def update_my_rag_config(data: RAGConfigUpdateRequest, current_user: dict = Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
+    await db.update_user_rag_config(current_user["id"], data.config)
+    return {"status": "success"}
 
 
 @router.post("/google-login", response_model=Token)

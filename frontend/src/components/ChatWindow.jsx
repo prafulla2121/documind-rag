@@ -62,21 +62,39 @@ export default function ChatWindow() {
       <div className="chat-header" style={{ justifyContent: 'space-between' }}>
         <h2>{currentSession?.title || 'New Conversation'} ⌵</h2>
         {messages.length > 0 && (
-          <button
-            className="nav-item"
-            style={{ width: 'auto', padding: '6px 12px' }}
-            onClick={() => {
-              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
-              const downloadAnchorNode = document.createElement('a');
-              downloadAnchorNode.setAttribute("href", dataStr);
-              downloadAnchorNode.setAttribute("download", `chat_export_${currentSessionId}.json`);
-              document.body.appendChild(downloadAnchorNode);
-              downloadAnchorNode.click();
-              downloadAnchorNode.remove();
-            }}
-          >
-            📥 Export
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="nav-item"
+              style={{ width: 'auto', padding: '6px 12px' }}
+              onClick={() => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", `chat_export_${currentSessionId}.json`);
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+              }}
+            >
+              📥 JSON
+            </button>
+            <button
+              className="nav-item"
+              style={{ width: 'auto', padding: '6px 12px' }}
+              onClick={() => {
+                const mdContent = messages.map(m => `### ${m.role.toUpperCase()}\n\n${m.content}\n\n---`).join('\n\n');
+                const dataStr = "data:text/markdown;charset=utf-8," + encodeURIComponent(mdContent);
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href", dataStr);
+                downloadAnchorNode.setAttribute("download", `chat_export_${currentSessionId}.md`);
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+              }}
+            >
+              📝 MD
+            </button>
+          </div>
         )}
       </div>
 

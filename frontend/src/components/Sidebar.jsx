@@ -6,6 +6,7 @@ export default function Sidebar({ activeView, onNavigate, stats }) {
   const { user, logout } = useAuth();
   const { sessions, currentSessionId, setCurrentSessionId, createNewChat, fetchSessions, isLoadingSessions } = useChat();
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+  const [sidebarSearch, setSidebarSearch] = useState('');
 
   useEffect(() => {
     fetchSessions();
@@ -51,6 +52,23 @@ export default function Sidebar({ activeView, onNavigate, stats }) {
       </button>
 
       <nav className="sidebar-nav">
+        <div style={{ padding: '0 12px 16px' }}>
+          <input
+            type="text"
+            placeholder="Search chats..."
+            value={sidebarSearch}
+            onChange={(e) => setSidebarSearch(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: '1px solid var(--sidebar-border)',
+              backgroundColor: 'var(--bg-color)',
+              color: 'var(--text-main)',
+              fontSize: '13px'
+            }}
+          />
+        </div>
         <button 
           className={`nav-item ${activeView === 'chat' ? 'active' : ''}`}
           onClick={() => onNavigate('chat')}
@@ -71,7 +89,9 @@ export default function Sidebar({ activeView, onNavigate, stats }) {
               Loading history...
             </div>
           ) : sessions.length > 0 ? (
-            sessions.map(session => (
+            sessions
+              .filter(s => s.title.toLowerCase().includes(sidebarSearch.toLowerCase()))
+              .map(session => (
               <div 
                 key={session.id} 
                 className={`history-item ${currentSessionId === session.id && activeView === 'chat' ? 'active' : ''}`}
