@@ -1,0 +1,260 @@
+"""
+Query API Routes — handles user questions with optional streaming.
+"""
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
+import json
+
+from pydantic import BaseModel
+from app.models.schemas import QueryRequest, QueryResponse
+from app.core.security import get_current_user
+from app.api.dependencies import get_pipeline, get_metadata_db
+from app.core.utils import count_tokens
+from app.providers.registry import get_llm_provider
+from app.providers.base import ModelConfig
+from app.core.vault import vault
+
+router = APIRouter()
+
+class FeedbackRequest(BaseModel):
+    query_id: int
+    rating: int # 1 for up, -1 for down
+
+class SessionRenameRequest(BaseModel):
+    title: str
+
+class MessageEditRequest(BaseModel):
+    session_id: str
+    message_id: str
+    new_content: str
+
+@router.post("/", response_model=QueryResponse)
+async def query_endpoint(
+    request: QueryRequest,
+    current_user=Depends(get_current_user),
+):
+    if len(request.query.strip()) < 2:
+        raise HTTPException(400, "Query too short")
+
+    pipeline = get_pipeline()
+    db = get_metadata_db()
+    if request.session_id:
+        belongs = await db.session_belongs_to_user(request.session_id, current_user["id"])
+        if not belongs:
+            raise HTTPException(404, "Session not found")
+    
+    # Generate session ID if not provided
+    import uuid
+    is_new_session = not request.session_id
+    session_id = request.session_id or str(uuid.uuid4())
+    
+    if is_new_session:
+        # Create session BEFORE starting the stream to avoid race conditions
+        await db.create_session(session_id, "New Chat", current_user["id"])
+    
+    # Save user message
+    user_message_id = str(uuid.uuid4())
+    user_tokens = count_tokens(request.query)
+    await db.add_message(user_message_id, session_id, "user", request.query, current_user["id"], token_count=user_tokens)
+
+    # Fetch previous messages for context
+    history = await db.get_messages(session_id, current_user["id"])
+
+    # Custom prompt
+    custom_prompt = await db.get_user_custom_prompt(current_user["id"])
+    rag_config = await db.get_user_rag_config(current_user["id"])
+
+    # Get LLM Provider from user config
+    config_dict = await db.get_user_model_config(current_user["id"])
+    if not config_dict:
+        config_dict = {
+            "provider": "ollama",
+            "model_name": "llama3",
+            "api_key": "",
+            "api_base_url": "http://localhost:11434",
+            "temperature": 0.1
+        }
+    else:
+        # Decrypt key before use
+        if config_dict.get("api_key"):
+            config_dict["api_key"] = vault.decrypt(config_dict["api_key"])
+            
+    provider = get_llm_provider(ModelConfig(**config_dict))
+
+    try:
+        if request.stream:
+            async def event_stream():
+                # Send session ID back to client first
+                yield f"data: {json.dumps({'type': 'session_id', 'data': session_id})}\n\n"
+                
+                full_answer = ""
+                sources_data = []
+                try:
+                    async for event in pipeline.stream_query(
+                        user_query=request.query,
+                        llm_provider=provider,
+                        user_id=current_user["id"],
+                        history=history,
+                        filters=request.filters,
+                        custom_system_prompt=custom_prompt,
+                        rag_config=rag_config,
+                    ):
+                        if event["type"] == "token":
+                            full_answer += event["data"]
+                        elif event["type"] == "sources":
+                            sources_data = event["data"]
+                            
+                        yield f"data: {json.dumps(event)}\n\n"
+                except Exception as e:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Streaming error: {e}")
+                    yield f"data: {json.dumps({'type': 'error', 'data': str(e)})}\n\n"
+                    
+                # Save assistant message at the end if we got anything
+                if full_answer:
+                    assistant_msg_id = str(uuid.uuid4())
+                    assistant_tokens = count_tokens(full_answer)
+                    await db.add_message(assistant_msg_id, session_id, "assistant", full_answer, current_user["id"], sources_data, token_count=assistant_tokens)
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        result = await pipeline.query(
+            user_query=request.query,
+            llm_provider=provider,
+            user_id=current_user["id"],
+            history=history,
+            filters=request.filters,
+            custom_system_prompt=custom_prompt,
+            rag_config=rag_config,
+        )
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Query error: {e}")
+        raise HTTPException(500, f"Error connecting to AI model: {str(e)}")
+    
+    # Add session_id to result
+    result["session_id"] = session_id
+
+    # Save assistant message
+    assistant_msg_id = str(uuid.uuid4())
+    assistant_tokens = count_tokens(result.get("answer", ""))
+    await db.add_message(assistant_msg_id, session_id, "assistant", result.get("answer", ""), current_user["id"], result.get("sources", []), token_count=assistant_tokens)
+
+    # Log query to database
+    try:
+        await db.log_query(
+            query=request.query,
+            intent=result.get("intent", ""),
+            num_retrieved=result.get("chunks_retrieved", 0),
+            num_final=result.get("chunks_after_rerank", 0),
+            answer=result.get("answer", ""),
+            latency_ms=result.get("latency_ms", 0),
+            user_id=current_user["id"],
+            tokens_input=user_tokens,
+            tokens_output=assistant_tokens
+        )
+    except Exception:
+        pass  # Don't fail the query due to logging errors
+
+    return QueryResponse(**result)
+
+@router.get("/sessions")
+async def get_sessions(current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    sessions = await db.get_sessions(current_user["id"])
+    return {"sessions": sessions}
+
+@router.get("/search")
+async def search_chat_history(q: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    results = await db.search_messages(q, current_user["id"])
+    return {"results": results}
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    messages = await db.get_messages(session_id, current_user["id"])
+    return {"messages": messages}
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    deleted = await db.delete_session(session_id, current_user["id"])
+    if not deleted:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, request: SessionRenameRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    renamed = await db.rename_session(session_id, request.title, current_user["id"])
+    if not renamed:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.post("/sessions/{session_id}/pin")
+async def toggle_pin(session_id: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    success = await db.toggle_pin_session(session_id, current_user["id"])
+    if not success:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.post("/edit")
+async def edit_message_and_regenerate(request: MessageEditRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    # 1. Verify session ownership
+    belongs = await db.session_belongs_to_user(request.session_id, current_user["id"])
+    if not belongs:
+        raise HTTPException(404, "Session not found")
+
+    # 2. Delete all messages from the edited message onwards
+    success = await db.delete_messages_after(request.session_id, request.message_id, current_user["id"])
+    if not success:
+        raise HTTPException(404, "Message not found")
+
+    # 3. Create a new QueryRequest with the edited content
+    # Note: The actual regeneration is handled by the frontend re-submitting the query
+    # after this cleanup is done. Or we could call query logic here.
+    # To keep it simple and reuse streaming logic, we'll just return success.
+    return {"status": "success", "new_query": request.new_content}
+
+@router.get("/admin/stats")
+async def get_admin_stats(current_user=Depends(get_current_user)):
+    # Basic role check (simplified for now)
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+
+    db = get_metadata_db()
+    stats = await db.get_stats()
+    # Add token stats
+    async with db.async_session() as session:
+        from sqlalchemy import select, func as sqfunc
+        token_res = await session.execute(
+            select(
+                sqfunc.sum(QueryLog.tokens_input),
+                sqfunc.sum(QueryLog.tokens_output)
+            )
+        )
+        t_in, t_out = token_res.first()
+        stats["total_tokens_input"] = t_in or 0
+        stats["total_tokens_output"] = t_out or 0
+
+    return stats
+
+@router.patch("/feedback")
+async def update_feedback(request: FeedbackRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    # Security: Verify that the query belongs to the current user
+    query = await db.get_query_log(request.query_id)
+    if not query or query.get("user_id") != current_user["id"]:
+        raise HTTPException(403, "Not authorized to rate this query")
+
+    await db.update_query_rating(request.query_id, request.rating)
+    return {"status": "success"}

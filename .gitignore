@@ -1,10 +1,31 @@
+# Python
 venv/
-.env
 __pycache__/
 *.pyc
 *.pyo
-faiss_index/
-.DS_Store
 *.egg-info/
 dist/
 build/
+
+# Data (generated at runtime)
+data/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Logs
+*.log
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

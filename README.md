@@ -1,154 +1,75 @@
-# 🧠 DocuMind – RAG-Powered Document Q&A System
+# Local-First RAG Company Assistant
 
-> Upload PDFs. Ask questions. Get answers with source citations — powered by LangChain, FAISS, and Claude.
+A fully local, production-grade Retrieval-Augmented Generation (RAG) assistant designed for parsing, embedding, and chatting with company documents locally without any Docker dependencies.
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue?logo=python)](https://python.org)
-[![LangChain](https://img.shields.io/badge/LangChain-0.1.20-green)](https://langchain.com)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.32-red)](https://streamlit.io)
-[![Claude](https://img.shields.io/badge/Claude-Anthropic-orange)](https://anthropic.com)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
----
-
-## 📌 Overview
-
-DocuMind is a production-grade **Retrieval-Augmented Generation (RAG)** system that lets you upload multiple PDF documents and ask natural language questions about them. It uses semantic search powered by FAISS to retrieve relevant context, then feeds it to Claude (Anthropic) for accurate, grounded answers with source citations.
+## Features
+- **Local-First AI**: Connects natively to local LLMs via Ollama.
+- **Embedded Database**: Uses Qdrant in Local File Mode + SQLite (No external DB servers required).
+- **Hybrid Search**: Fuses Dense Vector embeddings (`sentence-transformers`) with Sparse Retrieval (BM25) and Cross-Encoder reranking.
+- **Beautiful UI**: React + Vite frontend mimicking modern, clean AI chat interfaces.
+- **Session Memory**: Built-in chat history state management and recall.
 
 ---
 
-## ✨ Features
+## 🛠️ Prerequisites
 
-- 📄 **Multi-Document Support** — Upload and query multiple PDFs simultaneously
-- 🔍 **Semantic Search** — HuggingFace embeddings + FAISS vector store
-- 🤖 **Claude LLM** — Context-grounded answers via Anthropic's Claude API
-- 🧠 **Conversation Memory** — LangChain ConversationBufferMemory for multi-turn Q&A
-- 📎 **Source Citations** — Answers grounded in retrieved document chunks
-- 🚀 **REST API** — FastAPI endpoint for programmatic access
-- 🐳 **Docker Ready** — Containerized for easy deployment
+Before running the project, make sure you have the following installed:
+1. **Python 3.10+**
+2. **Node.js v18+**
+3. **Ollama** (Running locally on port `11434` with the `llama3` model downloaded)
 
----
-
-## 🏗️ Architecture
-
-```
-PDF Files → Text Extraction (PyPDF2)
-         → Text Chunking (CharacterTextSplitter)
-         → Embeddings (HuggingFace: all-MiniLM-L6-v2)
-         → FAISS Vector Index
-         
-User Query → Embed Query
-           → FAISS Semantic Search (top-k chunks)
-           → LangChain ConversationalRetrievalChain
-           → Claude LLM (claude-3-haiku)
-           → Answer + Source Citations
-```
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| LLM | Claude (Anthropic) / OpenAI GPT |
-| Embeddings | HuggingFace `all-MiniLM-L6-v2` |
-| Vector Store | FAISS |
-| RAG Framework | LangChain |
-| UI | Streamlit |
-| API | FastAPI |
-| Deployment | AWS EC2 + Nginx / Hugging Face Spaces |
-| CI/CD | GitHub Actions |
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone the repository
+To download the LLM model via Ollama, open a terminal and run:
 ```bash
-git clone https://github.com/prafulla2121/documind-rag.git
-cd documind-rag
-```
-
-### 2. Create virtual environment
-```bash
-python -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
-```
-
-### 3. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Add API keys
-Create a `.env` file:
-```
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-### 5. Run the app
-```bash
-streamlit run app.py
-```
-Open `http://localhost:8501` in your browser.
-
-### 6. Run the API (optional)
-```bash
-uvicorn api:app --reload --port 8000
-```
-Swagger docs at `http://localhost:8000/docs`
-
----
-
-## 🐳 Docker
-
-```bash
-docker build -t documind .
-docker run -p 8501:8501 --env-file .env documind
+ollama pull llama3
 ```
 
 ---
 
-## 📁 Project Structure
+## 🚀 How to Run the Project
 
-```
-documind-rag/
-├── app.py              # Streamlit UI + RAG pipeline
-├── api.py              # FastAPI REST endpoint
-├── htmlTemplates.py    # UI templates
-├── requirements.txt    # Dependencies
-├── Dockerfile          # Container config
-├── .env.example        # Environment template
-├── .gitignore
-└── README.md
-```
+You will need to open **two** separate terminal windows—one for the Backend and one for the Frontend.
+
+### Terminal 1: Start the FastAPI Backend
+
+1. Open a terminal and navigate to the root directory of the project.
+2. Create and activate a Python virtual environment (if you haven't already):
+   ```powershell
+   python -m venv venv
+   .\venv\Scripts\activate
+   ```
+3. Install the required Python dependencies:
+   ```powershell
+   cd backend
+   pip install -r requirements.txt
+   ```
+4. Start the FastAPI server using Uvicorn:
+   ```powershell
+   python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+   ```
+   *(Wait until you see `✅ RAG Company Assistant is ready!` in the console before moving to the next step).*
+
+### Terminal 2: Start the React Frontend
+
+1. Open a new terminal and navigate to the `frontend` folder:
+   ```powershell
+   cd frontend
+   ```
+2. Install the Node.js dependencies (only needed the first time):
+   ```powershell
+   npm install
+   ```
+3. Start the Vite development server:
+   ```powershell
+   npm run dev
+   ```
 
 ---
 
-## 📸 Demo
+## 💻 Usage
 
-> Upload 1–5 PDF files → Click "Process Documents" → Ask any question!
+Once both servers are running:
+1. Open your web browser and navigate to **http://localhost:5173**.
+2. Click the **Upload Documents** tab to drag and drop PDFs, DOCX, or paste URLs to scrape.
+3. Switch back to the **Current Chat** tab and ask the assistant questions based on your uploaded knowledge base.
 
-Example queries:
-- *"What is the main argument of this paper?"*
-- *"Summarize the key findings in section 3"*
-- *"What methodology was used?"*
-
----
-
-## 🤝 Contributing
-
-Pull requests are welcome! For major changes, open an issue first.
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) file.
-
----
-
-## 👤 Author
-
-**Prafulla Purohit**  
-🔗 [LinkedIn](https://linkedin.com/in/prafulla-purohit) | [GitHub](https://github.com/prafulla2121)
+*Note: All data (vectors, SQLite databases, and BM25 indices) is saved natively inside the `backend/data/` folder. To reset the application completely, simply delete the `data` folder and restart the backend.*
