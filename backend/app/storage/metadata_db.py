@@ -29,6 +29,7 @@ class DocumentRecord(Base):
     content_hash = Column(String, default="")
     status = Column(String, default="processing")  # processing, completed, failed
     user_id = Column(String, default="anonymous")
+    collection_id = Column(String, default="default")
     created_at = Column(DateTime, server_default=func.now())
 
 class ChatSession(Base):
@@ -36,6 +37,7 @@ class ChatSession(Base):
     id = Column(String, primary_key=True)
     title = Column(String, default="New Chat")
     user_id = Column(String, default="anonymous")
+    is_pinned = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
@@ -46,6 +48,7 @@ class ChatMessage(Base):
     role = Column(String, nullable=False)  # user or assistant
     content = Column(Text, nullable=False)
     sources = Column(Text, default="[]")  # JSON string of sources
+    token_count = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
 class User(Base):
@@ -55,6 +58,8 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role = Column(String, default="user")
     model_config = Column(String, default="{}")
+    rag_config = Column(String, default="{}")
+    custom_prompt = Column(Text, default="")
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -94,6 +99,8 @@ class QueryLog(Base):
     latency_ms = Column(Integer, default=0)
     user_id = Column(String, default="anonymous")
     rating = Column(Integer, default=0)
+    tokens_input = Column(Integer, default=0)
+    tokens_output = Column(Integer, default=0)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -177,6 +184,7 @@ class MetadataDB:
                     "title": r.title,
                     "num_chunks": r.num_chunks,
                     "status": r.status,
+                    "collection_id": r.collection_id,
                     "created_at": str(r.created_at) if r.created_at else None,
                 }
                 for r in rows
@@ -291,6 +299,44 @@ class MetadataDB:
             )
             await session.commit()
 
+    async def get_user_rag_config(self, user_id: str) -> dict:
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(User.rag_config).where(User.id == user_id)
+            )
+            config_str = result.scalar_one_or_none()
+            if config_str:
+                try:
+                    return json.loads(config_str)
+                except:
+                    return {}
+            return {}
+
+    async def update_user_rag_config(self, user_id: str, config: dict) -> None:
+        async with self.async_session() as session:
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(rag_config=json.dumps(config))
+            )
+            await session.commit()
+
+    async def get_user_custom_prompt(self, user_id: str) -> str:
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(User.custom_prompt).where(User.id == user_id)
+            )
+            return result.scalar_one_or_none() or ""
+
+    async def update_user_custom_prompt(self, user_id: str, prompt: str) -> None:
+        async with self.async_session() as session:
+            await session.execute(
+                update(User)
+                .where(User.id == user_id)
+                .values(custom_prompt=prompt)
+            )
+            await session.commit()
+
     async def get_user_by_username(self, username: str) -> dict | None:
         async with self.async_session() as session:
             result = await session.execute(
@@ -356,8 +402,23 @@ class MetadataDB:
             except IntegrityError:
                 await session.rollback()
 
+    async def get_query_log(self, query_id: int) -> dict | None:
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(QueryLog).where(QueryLog.id == query_id)
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            return {
+                "id": record.id,
+                "user_id": record.user_id,
+                "rating": record.rating,
+            }
+
     async def log_query(self, query: str, intent: str, num_retrieved: int,
-                        num_final: int, answer: str, latency_ms: int, user_id: str):
+                        num_final: int, answer: str, latency_ms: int, user_id: str,
+                        tokens_input: int = 0, tokens_output: int = 0):
         async with self.async_session() as session:
             record = QueryLog(
                 query=query,
@@ -367,6 +428,8 @@ class MetadataDB:
                 answer=answer[:2000],  # Truncate long answers
                 latency_ms=latency_ms,
                 user_id=user_id,
+                tokens_input=tokens_input,
+                tokens_output=tokens_output,
             )
             session.add(record)
             await session.commit()
@@ -411,10 +474,69 @@ class MetadataDB:
             result = await session.execute(
                 select(ChatSession)
                 .where(ChatSession.user_id == user_id)
-                .order_by(ChatSession.updated_at.desc())
+                .order_by(ChatSession.is_pinned.desc(), ChatSession.updated_at.desc())
             )
             rows = result.scalars().all()
-            return [{"id": r.id, "title": r.title, "updated_at": str(r.updated_at)} for r in rows]
+            return [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "is_pinned": bool(r.is_pinned),
+                    "updated_at": str(r.updated_at)
+                }
+                for r in rows
+            ]
+
+    async def toggle_pin_session(self, session_id: str, user_id: str = "anonymous") -> bool:
+        async with self.async_session() as session:
+            from sqlalchemy import update, select
+            result = await session.execute(
+                select(ChatSession).where(
+                    ChatSession.id == session_id,
+                    ChatSession.user_id == user_id,
+                )
+            )
+            record = result.scalar_one_or_none()
+            if not record:
+                return False
+
+            new_val = 1 if not record.is_pinned else 0
+            await session.execute(
+                update(ChatSession)
+                .where(ChatSession.id == session_id)
+                .values(is_pinned=new_val)
+            )
+            await session.commit()
+            return True
+
+    async def search_messages(self, query: str, user_id: str = "anonymous") -> list:
+        async with self.async_session() as session:
+            from sqlalchemy import select, and_
+            # Join with sessions to ensure user ownership
+            stmt = (
+                select(ChatMessage, ChatSession.title)
+                .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+                .where(
+                    and_(
+                        ChatSession.user_id == user_id,
+                        ChatMessage.content.ilike(f"%{query}%")
+                    )
+                )
+                .order_by(ChatMessage.created_at.desc())
+            )
+            result = await session.execute(stmt)
+            rows = result.all()
+            return [
+                {
+                    "id": r.ChatMessage.id,
+                    "session_id": r.ChatMessage.session_id,
+                    "session_title": r.title,
+                    "role": r.ChatMessage.role,
+                    "content": r.ChatMessage.content,
+                    "created_at": str(r.ChatMessage.created_at)
+                }
+                for r in rows
+            ]
 
     async def get_messages(self, session_id: str, user_id: str = "anonymous") -> list:
         async with self.async_session() as session:
@@ -449,7 +571,8 @@ class MetadataDB:
                 })
             return messages
 
-    async def add_message(self, message_id: str, session_id: str, role: str, content: str, user_id: str = "anonymous", sources: list = None):
+    async def add_message(self, message_id: str, session_id: str, role: str, content: str,
+                          user_id: str = "anonymous", sources: list = None, token_count: int = 0):
         try:
             async with self.async_session() as session:
                 import json
@@ -472,7 +595,8 @@ class MetadataDB:
                     session_id=session_id,
                     role=role,
                     content=content,
-                    sources=json.dumps(sources or [])
+                    sources=json.dumps(sources or []),
+                    token_count=token_count
                 )
                 session.add(record)
                 
@@ -493,6 +617,28 @@ class MetadataDB:
             logger.error(f"❌ Failed to save message {message_id}: {e}")
             raise
             
+    async def delete_messages_after(self, session_id: str, message_id: str, user_id: str = "anonymous") -> bool:
+        async with self.async_session() as session:
+            # 1. Get the creation time of the target message
+            res = await session.execute(
+                select(ChatMessage.created_at).where(ChatMessage.id == message_id)
+            )
+            msg_time = res.scalar_one_or_none()
+            if not msg_time:
+                return False
+
+            # 2. Delete all messages in this session created at or after this time
+            await session.execute(
+                delete(ChatMessage).where(
+                    and_(
+                        ChatMessage.session_id == session_id,
+                        ChatMessage.created_at >= msg_time
+                    )
+                )
+            )
+            await session.commit()
+            return True
+
     async def delete_session(self, session_id: str, user_id: str = "anonymous") -> bool:
         async with self.async_session() as session:
             from sqlalchemy import delete, select

@@ -5,15 +5,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import json
 
+from pydantic import BaseModel
 from app.models.schemas import QueryRequest, QueryResponse
 from app.core.security import get_current_user
 from app.api.dependencies import get_pipeline, get_metadata_db
+from app.core.utils import count_tokens
 from app.providers.registry import get_llm_provider
 from app.providers.base import ModelConfig
 from app.core.vault import vault
 
 router = APIRouter()
 
+class FeedbackRequest(BaseModel):
+    query_id: int
+    rating: int # 1 for up, -1 for down
+
+class SessionRenameRequest(BaseModel):
+    title: str
+
+class MessageEditRequest(BaseModel):
+    session_id: str
+    message_id: str
+    new_content: str
 
 @router.post("/", response_model=QueryResponse)
 async def query_endpoint(
@@ -41,11 +54,15 @@ async def query_endpoint(
     
     # Save user message
     user_message_id = str(uuid.uuid4())
-    await db.add_message(user_message_id, session_id, "user", request.query, current_user["id"])
+    user_tokens = count_tokens(request.query)
+    await db.add_message(user_message_id, session_id, "user", request.query, current_user["id"], token_count=user_tokens)
 
     # Fetch previous messages for context
     history = await db.get_messages(session_id, current_user["id"])
-    # We pass history to the pipeline to add context (need to update pipeline to use it)
+
+    # Custom prompt
+    custom_prompt = await db.get_user_custom_prompt(current_user["id"])
+    rag_config = await db.get_user_rag_config(current_user["id"])
 
     # Get LLM Provider from user config
     config_dict = await db.get_user_model_config(current_user["id"])
@@ -79,6 +96,8 @@ async def query_endpoint(
                         user_id=current_user["id"],
                         history=history,
                         filters=request.filters,
+                        custom_system_prompt=custom_prompt,
+                        rag_config=rag_config,
                     ):
                         if event["type"] == "token":
                             full_answer += event["data"]
@@ -95,7 +114,8 @@ async def query_endpoint(
                 # Save assistant message at the end if we got anything
                 if full_answer:
                     assistant_msg_id = str(uuid.uuid4())
-                    await db.add_message(assistant_msg_id, session_id, "assistant", full_answer, current_user["id"], sources_data)
+                    assistant_tokens = count_tokens(full_answer)
+                    await db.add_message(assistant_msg_id, session_id, "assistant", full_answer, current_user["id"], sources_data, token_count=assistant_tokens)
 
             return StreamingResponse(
                 event_stream(),
@@ -108,7 +128,9 @@ async def query_endpoint(
             llm_provider=provider,
             user_id=current_user["id"],
             history=history,
-            filters=request.filters
+            filters=request.filters,
+            custom_system_prompt=custom_prompt,
+            rag_config=rag_config,
         )
     except Exception as e:
         import logging
@@ -121,7 +143,8 @@ async def query_endpoint(
 
     # Save assistant message
     assistant_msg_id = str(uuid.uuid4())
-    await db.add_message(assistant_msg_id, session_id, "assistant", result.get("answer", ""), current_user["id"], result.get("sources", []))
+    assistant_tokens = count_tokens(result.get("answer", ""))
+    await db.add_message(assistant_msg_id, session_id, "assistant", result.get("answer", ""), current_user["id"], result.get("sources", []), token_count=assistant_tokens)
 
     # Log query to database
     try:
@@ -133,6 +156,8 @@ async def query_endpoint(
             answer=result.get("answer", ""),
             latency_ms=result.get("latency_ms", 0),
             user_id=current_user["id"],
+            tokens_input=user_tokens,
+            tokens_output=assistant_tokens
         )
     except Exception:
         pass  # Don't fail the query due to logging errors
@@ -144,6 +169,12 @@ async def get_sessions(current_user=Depends(get_current_user)):
     db = get_metadata_db()
     sessions = await db.get_sessions(current_user["id"])
     return {"sessions": sessions}
+
+@router.get("/search")
+async def search_chat_history(q: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    results = await db.search_messages(q, current_user["id"])
+    return {"results": results}
 
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages(session_id: str, current_user=Depends(get_current_user)):
@@ -157,4 +188,73 @@ async def delete_session(session_id: str, current_user=Depends(get_current_user)
     deleted = await db.delete_session(session_id, current_user["id"])
     if not deleted:
         raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, request: SessionRenameRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    renamed = await db.rename_session(session_id, request.title, current_user["id"])
+    if not renamed:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.post("/sessions/{session_id}/pin")
+async def toggle_pin(session_id: str, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    success = await db.toggle_pin_session(session_id, current_user["id"])
+    if not success:
+        raise HTTPException(404, "Session not found")
+    return {"status": "success"}
+
+@router.post("/edit")
+async def edit_message_and_regenerate(request: MessageEditRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    # 1. Verify session ownership
+    belongs = await db.session_belongs_to_user(request.session_id, current_user["id"])
+    if not belongs:
+        raise HTTPException(404, "Session not found")
+
+    # 2. Delete all messages from the edited message onwards
+    success = await db.delete_messages_after(request.session_id, request.message_id, current_user["id"])
+    if not success:
+        raise HTTPException(404, "Message not found")
+
+    # 3. Create a new QueryRequest with the edited content
+    # Note: The actual regeneration is handled by the frontend re-submitting the query
+    # after this cleanup is done. Or we could call query logic here.
+    # To keep it simple and reuse streaming logic, we'll just return success.
+    return {"status": "success", "new_query": request.new_content}
+
+@router.get("/admin/stats")
+async def get_admin_stats(current_user=Depends(get_current_user)):
+    # Basic role check (simplified for now)
+    if current_user.get("role") != "admin":
+        raise HTTPException(403, "Admin access required")
+
+    db = get_metadata_db()
+    stats = await db.get_stats()
+    # Add token stats
+    async with db.async_session() as session:
+        from sqlalchemy import select, func as sqfunc
+        token_res = await session.execute(
+            select(
+                sqfunc.sum(QueryLog.tokens_input),
+                sqfunc.sum(QueryLog.tokens_output)
+            )
+        )
+        t_in, t_out = token_res.first()
+        stats["total_tokens_input"] = t_in or 0
+        stats["total_tokens_output"] = t_out or 0
+
+    return stats
+
+@router.patch("/feedback")
+async def update_feedback(request: FeedbackRequest, current_user=Depends(get_current_user)):
+    db = get_metadata_db()
+    # Security: Verify that the query belongs to the current user
+    query = await db.get_query_log(request.query_id)
+    if not query or query.get("user_id") != current_user["id"]:
+        raise HTTPException(403, "Not authorized to rate this query")
+
+    await db.update_query_rating(request.query_id, request.rating)
     return {"status": "success"}

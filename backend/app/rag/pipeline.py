@@ -8,7 +8,9 @@ import logging
 from typing import AsyncGenerator
 
 from app.rag.query_processor import QueryProcessor
+from app.rag.query_transformer import QueryTransformer
 from app.rag.retriever import HybridRetriever
+from app.rag.compressor import ContextCompressor
 from app.rag.reranker import Reranker
 from app.rag.context_builder import ContextBuilder
 from app.providers.base import BaseLLMProvider
@@ -39,6 +41,8 @@ class RAGPipeline:
         self.retriever = retriever
         self.reranker = reranker
         self.context_builder = context_builder
+        self.query_transformer = QueryTransformer()
+        self.compressor = ContextCompressor()
         self.cache = cache
         self.tracer = tracer or RAGTracer()
         self.evaluator = evaluator
@@ -50,12 +54,14 @@ class RAGPipeline:
         user_id: str = "anonymous",
         history: list = None,
         filters: dict | None = None,
+        custom_system_prompt: str = None,
+        rag_config: dict = None,
     ) -> dict:
         start_time = time.time()
         stage_start = time.time()
         stage_timings = {}
         
-        history_context = self._format_history(history)
+        history_context = await self._format_history_dynamic(history, llm_provider)
 
         # 0. Check response cache
         cached = await self.cache.get_response(
@@ -71,6 +77,15 @@ class RAGPipeline:
         # 1. Process and Refine query (correct spelling, normalize)
         stage_start = time.time()
         processed = await self.query_processor.refine_async(user_query, llm_provider)
+
+        # 1b. Query Transformation (Multi-Query)
+        queries = [processed.rewritten]
+        try:
+            expanded = await self.query_transformer.multi_query(processed.rewritten, llm_provider)
+            queries.extend(expanded)
+        except Exception as e:
+            logger.warning(f"Query expansion failed: {e}")
+
         stage_timings["query_processing_ms"] = int((time.time() - stage_start) * 1000)
 
         # Bail early for chitchat
@@ -88,16 +103,16 @@ class RAGPipeline:
 
         # 2. Retrieve
         stage_start = time.time()
-        # Combine user filters, processor filters, and add user_id isolation
         search_filters = filters.copy() if filters else {}
         if processed.filters:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
 
-        candidates = self._retrieve_candidates(
-            original_query=user_query,
-            rewritten_query=processed.rewritten,
+        top_k = (rag_config or {}).get("top_k", 10)
+        candidates = self._retrieve_candidates_multi(
+            queries=queries,
             filters=search_filters,
+            top_k=top_k
         )
         stage_timings["retrieval_ms"] = int((time.time() - stage_start) * 1000)
 
@@ -115,15 +130,18 @@ class RAGPipeline:
 
         # 3. Rerank
         stage_start = time.time()
+        rerank_k = (rag_config or {}).get("rerank_k", 5)
         reranked = self.reranker.rerank(
             query=processed.rewritten,
             candidates=candidates,
+            limit=rerank_k
         )
         stage_timings["rerank_ms"] = int((time.time() - stage_start) * 1000)
 
-        # 4. Build context
+        # 4. Build and Compress context
         stage_start = time.time()
-        context, sources = self.context_builder.build(reranked, user_query)
+        _, sources = self.context_builder.build(reranked, user_query)
+        context = self.compressor.compress(user_query, reranked)
         stage_timings["context_build_ms"] = int((time.time() - stage_start) * 1000)
 
         # 5. Generate answer
@@ -132,8 +150,9 @@ class RAGPipeline:
         if history_context:
             prompt = f"PREVIOUS CHAT HISTORY:\n{history_context}\n\n{prompt}"
 
+        system_prompt = custom_system_prompt if custom_system_prompt else RAG_SYSTEM_PROMPT
         messages = [
-            {"role": "system", "content": RAG_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ]
 
@@ -163,8 +182,6 @@ class RAGPipeline:
 
         # 7. Trace and Evaluate
         if self.tracer:
-            # We don't have a session_id in the pipeline yet, usually passed from route
-            # For now we'll assume the caller logs to DB, but we log trace for analytics
             self.tracer.log_trace(
                 session_id="local_trace",
                 user_id=user_id,
@@ -187,14 +204,24 @@ class RAGPipeline:
         user_id: str = "anonymous",
         history: list = None,
         filters: dict | None = None,
+        custom_system_prompt: str = None,
+        rag_config: dict = None,
     ) -> AsyncGenerator:
         """Streaming version — yields SSE events for real-time frontend."""
 
-        history_context = self._format_history(history)
+        history_context = await self._format_history_dynamic(history, llm_provider)
 
         yield {"type": "phase", "data": "analyzing_query"}
         # 1. Process and Refine query
         processed = await self.query_processor.refine_async(user_query, llm_provider)
+
+        # 1b. Query Transformation (Multi-Query)
+        queries = [processed.rewritten]
+        try:
+            expanded = await self.query_transformer.multi_query(processed.rewritten, llm_provider)
+            queries.extend(expanded)
+        except Exception as e:
+            logger.warning(f"Query expansion failed: {e}")
 
         if processed.intent == "chitchat":
             yield {"type": "sources", "data": []}
@@ -209,10 +236,11 @@ class RAGPipeline:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
 
-        candidates = self._retrieve_candidates(
-            original_query=user_query,
-            rewritten_query=processed.rewritten,
+        top_k = (rag_config or {}).get("top_k", 10)
+        candidates = self._retrieve_candidates_multi(
+            queries=queries,
             filters=search_filters,
+            top_k=top_k
         )
 
         if not candidates:
@@ -223,11 +251,13 @@ class RAGPipeline:
 
         # 3. Rerank
         yield {"type": "phase", "data": "reranking_results"}
-        reranked = self.reranker.rerank(processed.rewritten, candidates)
+        rerank_k = (rag_config or {}).get("rerank_k", 5)
+        reranked = self.reranker.rerank(processed.rewritten, candidates, limit=rerank_k)
 
-        # 4. Build context
+        # 4. Build and Compress context
         yield {"type": "phase", "data": "building_context"}
-        context, sources = self.context_builder.build(reranked, user_query)
+        _, sources = self.context_builder.build(reranked, user_query)
+        context = self.compressor.compress(user_query, reranked)
 
         # Yield sources first (UI shows them while text streams)
         yield {"type": "sources", "data": sources}
@@ -238,8 +268,9 @@ class RAGPipeline:
         if history_context:
             prompt = f"PREVIOUS CHAT HISTORY:\n{history_context}\n\n{prompt}"
 
+        system_prompt = custom_system_prompt if custom_system_prompt else RAG_SYSTEM_PROMPT
         messages = [
-            {"role": "system", "content": RAG_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ]
 
@@ -257,7 +288,7 @@ class RAGPipeline:
                 retrieved_chunks=candidates,
                 reranked_chunks=reranked,
                 final_answer=full_answer,
-                latency_ms=0, # Latency for streaming is handled differently, usually ttft or total time
+                latency_ms=0,
                 model_used=str(llm_provider),
                 intent=processed.intent,
                 query_rewritten=processed.rewritten,
@@ -265,37 +296,46 @@ class RAGPipeline:
 
         yield {"type": "done", "data": None}
         
-    def _format_history(self, history: list) -> str:
+    async def _format_history_dynamic(self, history: list, llm_provider: BaseLLMProvider) -> str:
         if not history:
             return ""
         
-        # Take last 5 messages to save tokens
-        recent = history[-5:] if len(history) > 5 else history
+        # If history is long, summarize it
+        token_limit = 1000
+        total_tokens = sum(msg.get("token_count", 0) for msg in history)
+
+        if total_tokens > token_limit:
+            logger.info(f"Summarizing history (tokens: {total_tokens})")
+            tail = history[-4:]
+            text_to_summarize = "\n".join([f"{m['role']}: {m['content']}" for m in history[:-4]])
+            summary_prompt = f"Summarize the following chat history in 3 sentences, maintaining key facts:\n\n{text_to_summarize}"
+            summary = await llm_provider.generate([{"role": "user", "content": summary_prompt}])
+            formatted = [f"SUMMARY OF EARLIER CONVERSATION: {summary}"]
+            for msg in tail:
+                role = "USER" if msg["role"] == "user" else "ASSISTANT"
+                formatted.append(f"{role}: {msg['content']}")
+            return "\n".join(formatted)
+
         formatted = []
-        for msg in recent:
+        for msg in history:
             role = "USER" if msg["role"] == "user" else "ASSISTANT"
-            # Ignore messages that are sources lists or empty
             content = msg["content"].strip()
             if content:
                 formatted.append(f"{role}: {content}")
-                
         return "\n".join(formatted)
 
-    def _retrieve_candidates(
+    def _retrieve_candidates_multi(
         self,
-        original_query: str,
-        rewritten_query: str,
+        queries: list[str],
         filters: dict | None = None,
+        top_k: int = 10,
     ) -> list:
-        """Retrieve against both original and rewritten query text, then merge."""
-        queries = [original_query.strip()]
-        if rewritten_query and rewritten_query.strip() and rewritten_query.strip() not in queries:
-            queries.append(rewritten_query.strip())
-
+        """Retrieve against multiple query versions, then merge."""
         merged = {}
-        top_k = max(settings.TOP_K_DENSE, settings.TOP_K_SPARSE, settings.TOP_K_FINAL, 10)
         for query in queries:
-            for doc in self.retriever.retrieve(query=query, top_k=top_k, filters=filters):
+            if not query.strip():
+                continue
+            for doc in self.retriever.retrieve(query=query.strip(), top_k=top_k, filters=filters):
                 existing = merged.get(doc["id"])
                 if not existing:
                     merged[doc["id"]] = doc

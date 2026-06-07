@@ -27,6 +27,8 @@ export default function UploadPanel({ onUploadComplete }) {
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCollection, setActiveCollection] = useState('all');
   const [urlInput, setUrlInput] = useState('');
   const [crawlSite, setCrawlSite] = useState(false);
   const [maxPages, setMaxPages] = useState(10);
@@ -357,9 +359,50 @@ export default function UploadPanel({ onUploadComplete }) {
 
         {/* Document List */}
         <div className="documents-section">
-          <h4>Ingested Sources ({documents.length})</h4>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '8px' }}>
+            {['all', 'default', 'research', 'legal', 'finance'].map(c => (
+              <button
+                key={c}
+                onClick={() => setActiveCollection(c)}
+                style={{
+                  padding: '4px 12px',
+                  borderRadius: '999px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: activeCollection === c ? var('--accent-color') : 'transparent',
+                  color: activeCollection === c ? '#fff' : 'var(--text-muted)',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {c.charAt(0).toUpperCase() + c.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <h4>Ingested Sources ({documents.length})</h4>
+            <input
+              type="text"
+              placeholder="Search documents..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: '1px solid var(--border-color)',
+                fontSize: '13px',
+                width: '200px'
+              }}
+            />
+          </div>
           <div className="doc-list">
-            {documents.map((doc) => (
+            {documents.filter(doc => {
+              const matchesSearch = doc.filename.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (doc.title && doc.title.toLowerCase().includes(searchQuery.toLowerCase()));
+              const matchesCollection = activeCollection === 'all' || doc.collection_id === activeCollection;
+              return matchesSearch && matchesCollection;
+            }).map((doc) => (
               <div key={doc.id} className="doc-item">
                 <div className="doc-icon">{getFileIcon(doc.filename)}</div>
                 <div className="doc-info">
