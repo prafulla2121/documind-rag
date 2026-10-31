@@ -13,7 +13,7 @@ class ContextCompressor:
     def __init__(self, top_n_sentences: int = 5):
         self.top_n_sentences = top_n_sentences
         try:
-            nltk.download('punkt', quiet=True)
+            nltk.download('punkt_tab', quiet=True)  # nltk>=3.9 sent_tokenize needs punkt_tab, not punkt
         except Exception:
             pass
 
