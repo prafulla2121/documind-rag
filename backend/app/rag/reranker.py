@@ -27,7 +27,7 @@ class Reranker:
             logger.info("Reranker model loaded")
         self.top_k = top_k
 
-    def rerank(self, query: str, candidates: List[Dict]) -> List[Dict]:
+    def rerank(self, query: str, candidates: List[Dict], limit: int | None = None) -> List[Dict]:
         if not candidates:
             return []
 
@@ -43,9 +43,10 @@ class Reranker:
 
         reranked = sorted(candidates, key=lambda x: x["rerank_score"], reverse=True)
 
-        logger.info(f"Reranked {len(candidates)} → top {self.top_k}")
+        top_k = limit or self.top_k
+        logger.info(f"Reranked {len(candidates)} → top {top_k}")
 
-        return reranked[:self.top_k]
+        return reranked[:top_k]
 
     def _rerank_text(self, doc: Dict) -> str:
         metadata = doc.get("metadata", {})
