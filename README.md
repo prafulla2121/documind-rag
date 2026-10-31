@@ -127,7 +127,7 @@ What the evals found on their first run, and what was fixed:
 - The chit-chat check matched `hi` inside words, so "Which light mode…" and "How bright is High mode…" got the greeting reply instead of an answer (`answered_from_docs` was 0.87). Fixed with word boundaries; now 1.00.
 - Still open: the context compressor keeps only 5 sentences, and for 3 of 15 questions it drops the sentence with the answer even though retrieval ranked it first.
 
-The [`tests-and-evals`](.github/workflows/tests-and-evals.yml) workflow runs `pytest` and the stub-mode evals on every push, fails if `hit_rate_at_5` drops below 0.9, and adds the report to the job summary.
+The CI workflow for this (pytest + stub-mode evals on every push, fails if `hit_rate_at_5` drops below 0.9) is committed separately; see the `ci:` commit.
 
 ## MCP server
 
