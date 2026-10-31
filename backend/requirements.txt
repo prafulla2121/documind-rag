@@ -55,3 +55,9 @@ aiofiles==24.1.0
 # --- Production ---
 redis[asyncio]==5.1.1
 asyncpg==0.30.0
+
+# --- MCP server (FastMCP API; mcp 2.x renamed it) ---
+mcp>=1.10,<2
+
+# --- Tests ---
+pytest>=8

@@ -29,3 +29,7 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Eval output
+evals/report.md
+eval-report.md
