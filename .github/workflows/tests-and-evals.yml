@@ -1,0 +1,55 @@
+name: tests-and-evals
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: documind_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      PGVECTOR_TEST_URL: postgresql://postgres:postgres@localhost:5432/documind_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r backend/requirements.txt
+
+      - name: Cache embedding and reranker models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-minilm-ms-marco-v1
+
+      - name: Tests (incl. pgvector against the service container)
+        run: pytest tests -q
+
+      - name: Evals (stub LLM, real retrieval, no API keys)
+        run: python evals/run_evals.py --provider stub --min-hit-rate 0.9 --out eval-report.md
+
+      - name: Publish eval report
+        if: always()
+        run: test -f eval-report.md && cat eval-report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: eval-report.md
+          if-no-files-found: ignore
