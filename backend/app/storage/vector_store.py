@@ -1,6 +1,12 @@
 """
-Vector Store — Qdrant in local file mode (no server needed).
-Stores vectors on disk via qdrant_client local path mode.
+Vector Store — Qdrant in local file mode (no server needed) or Postgres + pgvector.
+
+`VectorStore()` returns the backend chosen by settings.VECTOR_BACKEND. Both backends
+have the same methods: create_collection, upsert_chunks, search, get_collection_info,
+delete_by_doc_id, fetch_all_texts.
+
+Qdrant local mode locks its folder to one process, so the API + worker setup
+(docker-compose) needs VECTOR_BACKEND=pgvector.
 """
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -14,7 +20,15 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class VectorStore:
+def VectorStore(path: str = None, collection_name: str = "company_docs"):
+    from app.core.config import settings
+    if settings.VECTOR_BACKEND == "pgvector":
+        from app.storage.pgvector_store import PgVectorStore
+        return PgVectorStore()
+    return QdrantVectorStore(path, collection_name)
+
+
+class QdrantVectorStore:
     _instance = None
 
     def __new__(cls, path: str = None, collection_name: str = "company_docs"):
@@ -66,6 +80,7 @@ class VectorStore:
                 "doc_id": metadata.get("doc_id", ""),
                 "filename": metadata.get("filename", ""),
                 "user_id": metadata.get("user_id", "anonymous"),
+                "tenant_id": metadata.get("tenant_id", "default"),
                 "video_id": metadata.get("video_id", ""),
                 "video_title": metadata.get("video_title", ""),
                 "channel_name": metadata.get("channel_name", ""),

@@ -22,11 +22,12 @@ logger = logging.getLogger(__name__)
 
 _pipeline: RAGPipeline | None = None
 _metadata_db: MetadataDB | None = None
-_vector_store: VectorStore | None = None
+_vector_store = None
 _embedder: Embedder | None = None
-_bm25: BM25Index | None = None
+_bm25 = None
 _cache: CacheManager | None = None
 _tracer: RAGTracer | None = None
+_queue = None  # arq pool (Redis); also used for rate limits
 
 
 def get_embedder() -> Embedder:
@@ -36,7 +37,7 @@ def get_embedder() -> Embedder:
     return _embedder
 
 
-def get_vector_store() -> VectorStore:
+def get_vector_store():
     global _vector_store
     if _vector_store is None:
         _vector_store = VectorStore(
@@ -46,11 +47,38 @@ def get_vector_store() -> VectorStore:
     return _vector_store
 
 
-def get_bm25() -> BM25Index:
+def get_bm25():
+    """Sparse index: BM25 pickle for Qdrant, Postgres full-text search for pgvector."""
     global _bm25
     if _bm25 is None:
-        _bm25 = BM25Index(index_path=settings.BM25_INDEX_PATH)
+        if settings.VECTOR_BACKEND == "pgvector":
+            from app.storage.pgvector_store import PgKeywordIndex
+            _bm25 = PgKeywordIndex()
+        else:
+            _bm25 = BM25Index(index_path=settings.BM25_INDEX_PATH)
     return _bm25
+
+
+async def get_queue():
+    global _queue
+    if _queue is None:
+        from arq import create_pool
+        from arq.connections import RedisSettings
+        if not settings.REDIS_URL:
+            raise RuntimeError("REDIS_URL is required for the /v1 platform API")
+        _queue = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+    return _queue
+
+
+def get_platform_llm():
+    from app.providers.base import ModelConfig
+    from app.providers.registry import get_llm_provider
+    return get_llm_provider(ModelConfig(
+        provider=settings.PLATFORM_LLM_PROVIDER,
+        model_name=settings.PLATFORM_LLM_MODEL,
+        api_key=settings.PLATFORM_LLM_API_KEY,
+        api_base_url=settings.PLATFORM_LLM_BASE_URL,
+    ))
 
 
 def get_metadata_db() -> MetadataDB:
@@ -107,6 +135,11 @@ async def initialize_services():
 
     # Heavy RAG components are initialized lazily when documents are ingested or
     # queried, so auth and admin routes can start without downloading models.
+    if settings.VECTOR_BACKEND == "pgvector":
+        get_vector_store().create_collection(vector_dim=get_embedder().dimension)
+        logger.info("pgvector backend: schema ready; keyword search runs in Postgres, no BM25 warm-up")
+        return
+
     # Try to load BM25 index
     bm25 = get_bm25()
     try:

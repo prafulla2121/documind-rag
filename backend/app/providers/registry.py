@@ -3,6 +3,7 @@ from .openai_provider import OpenAIProvider
 from .anthropic_provider import AnthropicProvider
 from .gemini_provider import GeminiProvider
 from .ollama_provider import OllamaProvider
+from .stub_provider import StubProvider
 
 PROVIDER_CATALOG = {
     "openai": {
@@ -80,6 +81,7 @@ def get_llm_provider(config: ModelConfig):
         "anthropic": AnthropicProvider,
         "gemini": GeminiProvider,
         "ollama": OllamaProvider,
+        "stub": StubProvider,
     }
 
     if config.provider == "groq" and not config.api_base_url:

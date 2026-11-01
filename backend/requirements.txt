@@ -59,5 +59,13 @@ asyncpg==0.30.0
 # --- MCP server (FastMCP API; mcp 2.x renamed it) ---
 mcp>=1.10,<2
 
+# --- Platform: queue, pgvector, metrics ---
+arq==0.28.0
+psycopg[binary,pool]==3.3.6
+prometheus-client>=0.20
+
 # --- Tests ---
 pytest>=8
+fakeredis==2.40.0
+
+# Load test only (not needed at runtime): pip install locust==2.47.0

@@ -36,6 +36,10 @@ flowchart LR
     API --> CA[(Cache<br/>Redis or in-memory)]
 ```
 
+> **Platform API (`/v1`)**: multi-tenant, API keys, async ingestion through a Redis queue and a
+> separate worker, Postgres + pgvector, Prometheus metrics. Design and trade-offs:
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Load-test numbers: [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
+
 ## Features
 
 - **Many sources** — PDF, DOCX, HTML/URL, whole sitemaps, and YouTube transcripts.
@@ -89,6 +93,46 @@ npm run dev
 Open http://localhost:5173. API docs are at http://localhost:8000/api/docs.
 
 All local data (vectors, BM25 index, uploads) is stored in `data/`. Delete that folder to reset.
+
+## Platform API (multi-tenant, queue, pgvector)
+
+Needs Docker:
+
+```bash
+make up                        # or: docker compose up -d --build
+# api :8000, worker, Postgres+pgvector :5432, Redis :6379 — all with healthchecks
+# Default tenant key: demo:demo-key (set TENANT_API_KEYS="acme:key1,globex:key2")
+# Default LLM is the stub (echoes retrieved context). For a real model:
+#   PLATFORM_LLM_PROVIDER=ollama PLATFORM_LLM_MODEL=llama3.2:3b make up
+
+curl -H "X-API-Key: demo-key" -F file=@evals/harbor_lamp_guide.md http://localhost:8000/v1/documents
+# -> 202 {"job_id": "...", "status": "queued"}
+curl -H "X-API-Key: demo-key" http://localhost:8000/v1/jobs/<job_id>
+# -> {"status": "complete", "result": {"num_chunks": 8, ...}}
+curl -H "X-API-Key: demo-key" -H "Content-Type: application/json"      -d '{"query": "What water resistance rating does the lantern have?"}' http://localhost:8000/v1/query
+curl http://localhost:8000/metrics   # latency histogram, queue depth, rate-limit rejections
+```
+
+| Endpoint | What it does |
+| --- | --- |
+| `POST /v1/documents` | Upload a file; saved and enqueued, returns `202` + `job_id` |
+| `GET /v1/jobs/{job_id}` | `queued` / `in_progress` / `complete` + result; 404 for other tenants' jobs |
+| `POST /v1/query` | Answer + sources from the caller's tenant only |
+| `GET /metrics` | Prometheus: `documind_request_latency_seconds`, `documind_queue_depth`, `documind_rate_limited_total` |
+
+Every request gets an `X-Request-ID` (kept if the client sends one) that appears in every log line.
+`LOG_FORMAT=json` gives one JSON object per line. Set `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` /
+`LANGFUSE_HOST` and `pip install langfuse` to trace `/v1/query` in Langfuse.
+
+Without Docker, the same stack runs from three terminals (Postgres with pgvector and a Redis-compatible
+server must already be running; this is how the benchmarks were run):
+
+```bash
+cd backend
+export VECTOR_BACKEND=pgvector REDIS_URL=redis://localhost:6379/0        DATABASE_URL=postgresql+asyncpg://postgres@localhost:5432/documind        TENANT_API_KEYS=demo:demo-key PLATFORM_LLM_PROVIDER=stub
+uvicorn app.main:app --port 8000          # terminal 1
+arq app.worker.WorkerSettings             # terminal 2 (same env)
+```
 
 ## Evals
 
@@ -183,7 +227,13 @@ The tests in `tests/test_mcp_server.py` drive the server through a real MCP clie
 ```bash
 pip install -r backend/requirements.txt
 pytest tests -q
+# pgvector tests need a real Postgres with the vector extension (a throw-away database):
+PGVECTOR_TEST_URL=postgresql://postgres:postgres@localhost:5432/documind_test pytest tests/test_pgvector.py
 ```
+
+`tests/test_platform.py` runs the queue path end to end with fakeredis and a real arq worker:
+upload as one tenant → job queued → worker ingests → job complete → only that tenant can query it
+or see the job. It also covers the per-tenant rate limit, `/metrics` and request ids.
 
 ## Environment variables
 
@@ -217,10 +267,13 @@ backend/
     rag/             query processor/transformer, hybrid retriever, BM25, reranker,
                      compressor, context builder, prompts, observability, pipeline
     providers/       OpenAI, Anthropic, Gemini, Ollama + model catalog
-    storage/         Qdrant vector store, SQL metadata DB, cache
+    storage/         vector store (Qdrant or pgvector), SQL metadata DB, cache
 evals/               golden set, sample doc, eval runner (run_evals.py)
+backend/app/worker.py  arq ingestion worker (separate process)
+bench/               load test (locust) and ingestion throughput script
+docs/                ARCHITECTURE.md, BENCHMARKS.md
 mcp_server/          MCP server (server.py)
-tests/               pytest suite for evals and the MCP server
+tests/               pytest: evals, MCP server, platform API (tenants, queue), pgvector
 frontend/            React + Vite chat UI
 app.py, api.py       first version: Streamlit + LangChain + FAISS demo (kept for reference)
 ```

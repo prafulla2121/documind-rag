@@ -49,7 +49,9 @@ class IngestionPipeline:
         self.vector_store = VectorStore()
         self.youtube_parser = YouTubeParser()
 
-    def ingest_file(self, filepath: str, original_filename: str = "", user_id: str = "anonymous") -> dict:
+    def ingest_file(
+        self, filepath: str, original_filename: str = "", user_id: str = "anonymous", tenant_id: str = "default",
+    ) -> dict:
         """
         Ingest a single file: parse → clean → chunk → embed → store.
         Returns dict with doc_id and num_chunks.
@@ -90,6 +92,7 @@ class IngestionPipeline:
             "filename": original_filename,
             "source_url": "",
             "user_id": user_id,
+            "tenant_id": tenant_id,
         }
 
         # Use structural chunker for docs with headings, sliding window as fallback
@@ -129,6 +132,7 @@ class IngestionPipeline:
         doc_id: str | None = None,
         source_url: str = "",
         filename: str = "",
+        tenant_id: str = "default",
     ) -> dict:
         """Ingest raw text directly."""
         doc_id = doc_id or str(uuid.uuid4())
@@ -141,6 +145,7 @@ class IngestionPipeline:
             "filename": filename,
             "source_url": source_url,
             "user_id": user_id,
+            "tenant_id": tenant_id,
         }
 
         chunks = self.structural_chunker.chunk(cleaned, base_metadata)
@@ -169,6 +174,7 @@ class IngestionPipeline:
         user_id: str = "anonymous",
         chunker: str = "sliding_window",
         doc_id: str | None = None,
+        tenant_id: str = "default",
     ) -> dict:
         """Ingest a YouTube transcript URL into the vector store."""
         if not is_youtube_url(url):
@@ -192,6 +198,7 @@ class IngestionPipeline:
                 "filename": segment["video_title"],
                 "title": segment["video_title"],
                 "user_id": user_id,
+                "tenant_id": tenant_id,
             }
             segment_chunks = selected_chunker.chunk(segment["text"], base_metadata)
             for chunk in segment_chunks:

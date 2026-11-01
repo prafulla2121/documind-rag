@@ -56,6 +56,7 @@ class RAGPipeline:
         filters: dict | None = None,
         custom_system_prompt: str = None,
         rag_config: dict = None,
+        tenant_id: str = "default",
     ) -> dict:
         start_time = time.time()
         stage_start = time.time()
@@ -66,7 +67,7 @@ class RAGPipeline:
         # 0. Check response cache
         cached = await self.cache.get_response(
             user_query,
-            user_id=user_id,
+            user_id=f"{tenant_id}/{user_id}",
             filters=filters,
             model_id=settings.LLM_MODEL,
         )
@@ -107,6 +108,7 @@ class RAGPipeline:
         if processed.filters:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
+        search_filters["tenant_id"] = tenant_id  # set last: a request filter cannot override it
 
         top_k = (rag_config or {}).get("top_k", 10)
         candidates = self._retrieve_candidates_multi(
@@ -175,7 +177,7 @@ class RAGPipeline:
         await self.cache.set_response(
             user_query,
             result,
-            user_id=user_id,
+            user_id=f"{tenant_id}/{user_id}",
             filters=filters,
             model_id=settings.LLM_MODEL,
         )
@@ -206,6 +208,7 @@ class RAGPipeline:
         filters: dict | None = None,
         custom_system_prompt: str = None,
         rag_config: dict = None,
+        tenant_id: str = "default",
     ) -> AsyncGenerator:
         """Streaming version — yields SSE events for real-time frontend."""
 
@@ -235,6 +238,7 @@ class RAGPipeline:
         if processed.filters:
             search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
+        search_filters["tenant_id"] = tenant_id  # set last: a request filter cannot override it
 
         top_k = (rag_config or {}).get("top_k", 10)
         candidates = self._retrieve_candidates_multi(
