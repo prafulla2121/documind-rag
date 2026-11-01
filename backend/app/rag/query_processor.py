@@ -22,8 +22,9 @@ class QueryProcessor:
     INTENT_PATTERNS = {
         "procedural": [r"how (do|can|to)", r"steps to", r"process for", r"procedure"],
         "factual": [r"what is", r"when (is|was|did)", r"who is", r"where is", r"tell me about"],
-        "comparison": [r"vs", r"difference between", r"compare", r"better"],
-        "chitchat": [r"hello|hi|hey", r"thanks|thank you", r"how are you", r"good morning"],
+        "comparison": [r"\bvs\b", r"difference between", r"compare", r"better"],
+        # word boundaries: plain "hi" matched inside "which"/"high" and sent real questions to chitchat
+        "chitchat": [r"\b(hello|hi|hey)\b", r"\b(thanks|thank you)\b", r"how are you", r"good morning"],
     }
 
     DEPARTMENT_KEYWORDS = {

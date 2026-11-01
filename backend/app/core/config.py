@@ -54,6 +54,22 @@ class Settings(BaseSettings):
     FRONTEND_PORT: int = 5173
     REDIS_URL: Optional[str] = None
 
+    # --- Platform (multi-tenant API, queue, pgvector) ---
+    VECTOR_BACKEND: str = "qdrant"  # "qdrant" (local file, single process) or "pgvector"
+    PGVECTOR_URL: str = ""  # psycopg conninfo; empty = DATABASE_URL without the +asyncpg driver
+    TENANT_API_KEYS: str = ""  # "tenant_a:key1,tenant_b:key2"
+    RATE_LIMIT_PER_MINUTE: int = 120  # per tenant, fixed one-minute window
+    MAX_UPLOAD_MB: int = 20
+    PLATFORM_LLM_PROVIDER: str = "ollama"  # "stub" = no model, echoes context (tests, load tests)
+    PLATFORM_LLM_MODEL: str = "llama3.2:3b"
+    PLATFORM_LLM_API_KEY: str = ""
+    PLATFORM_LLM_BASE_URL: str = ""
+    LOG_FORMAT: str = "text"  # "json" for structured logs
+
+    @property
+    def pgvector_dsn(self) -> str:
+        return self.PGVECTOR_URL or self.DATABASE_URL.replace("+asyncpg", "", 1)
+
     @property
     def async_db_url(self) -> str:
         """Return the database URL with the asyncpg driver, stripping unsupported params."""

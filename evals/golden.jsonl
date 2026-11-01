@@ -1,0 +1,15 @@
+{"id": "q01", "question": "How much does the Harbor HL-7 weigh?", "evidence": "weighs 410 grams", "answer": "It weighs 410 grams."}
+{"id": "q02", "question": "What water resistance rating does the lantern have?", "evidence": "IP67", "answer": "IP67; it can sit under one metre of fresh water for up to 30 minutes."}
+{"id": "q03", "question": "What type of battery is inside the lantern and how big is it?", "evidence": "5,200 mAh lithium iron phosphate", "answer": "A 5,200 mAh lithium iron phosphate (LiFePO4) battery."}
+{"id": "q04", "question": "How long does solar charging take from empty?", "evidence": "about 14 hours of direct sunlight", "answer": "About 14 hours of direct sunlight."}
+{"id": "q05", "question": "How fast does it charge over USB-C?", "evidence": "charges it in 3 hours from a 10 watt adapter", "answer": "3 hours from a 10 watt adapter."}
+{"id": "q06", "question": "What does the green ring around the power button mean?", "evidence": "green ring around the power button", "answer": "It stays on while charging and turns off when the battery is full."}
+{"id": "q07", "question": "How many charge cycles is the battery rated for?", "evidence": "2,000 full charge cycles", "answer": "2,000 full charge cycles before dropping to 80 percent capacity."}
+{"id": "q08", "question": "How bright is High mode and how long does it last?", "evidence": "400 lumens and runs for 8 hours", "answer": "400 lumens for 8 hours."}
+{"id": "q09", "question": "Which light mode runs the longest?", "evidence": "runs for 120 hours", "answer": "SOS mode, which runs for 120 hours."}
+{"id": "q10", "question": "How do I turn the lantern off?", "evidence": "Hold the power button for 2 seconds", "answer": "Hold the power button for 2 seconds from any mode."}
+{"id": "q11", "question": "Can the lantern charge my phone, and at what output?", "evidence": "5 volts at 1 amp", "answer": "Yes, through the USB-A port, at up to 5 volts and 1 amp."}
+{"id": "q12", "question": "When does the lantern stop sharing power with a phone?", "evidence": "falls to 20 percent", "answer": "When its own battery falls to 20 percent."}
+{"id": "q13", "question": "How should I store the lantern for a long time?", "evidence": "charge the battery to about 60 percent", "answer": "Charge to about 60 percent, keep it between 10 and 25 degrees Celsius, and top up every three months."}
+{"id": "q14", "question": "How do I factory reset the lantern?", "evidence": "hold the power button and the mode button together for 10 seconds", "answer": "Hold the power and mode buttons together for 10 seconds until the light blinks twice."}
+{"id": "q15", "question": "How long is the warranty and what does it not cover?", "evidence": "3-year limited warranty", "answer": "3 years; it does not cover damage from salt water left to dry inside the USB ports."}

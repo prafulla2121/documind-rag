@@ -1,62 +1,86 @@
-version: '3.8'
+# DocuMind platform: api + ingestion worker + Postgres (pgvector) + Redis.
+#   make up        (or: docker compose up -d --build)
+# The React UI is not containerised; run it with `npm run dev` in frontend/.
+
+x-app: &app
+  build: ./backend
+  restart: unless-stopped
+  environment:
+    VECTOR_BACKEND: pgvector
+    DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/documind
+    PGVECTOR_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/documind
+    REDIS_URL: redis://redis:6379/0
+    UPLOAD_DIR: /data/uploads
+    DATA_DIR: /data
+    TENANT_API_KEYS: ${TENANT_API_KEYS:-demo:demo-key}
+    RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-120}
+    PLATFORM_LLM_PROVIDER: ${PLATFORM_LLM_PROVIDER:-stub}
+    PLATFORM_LLM_MODEL: ${PLATFORM_LLM_MODEL:-llama3.2:3b}
+    PLATFORM_LLM_API_KEY: ${PLATFORM_LLM_API_KEY:-}
+    PLATFORM_LLM_BASE_URL: ${PLATFORM_LLM_BASE_URL:-}
+    OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    SECRET_KEY: ${SECRET_KEY:-change-me}
+    ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-me}
+    LOG_FORMAT: json
+    LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+    LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+    LANGFUSE_HOST: ${LANGFUSE_HOST:-}
+  volumes:
+    - uploads:/data   # api writes uploads, worker reads them
+    - models:/models  # Hugging Face cache, downloaded once
+  depends_on:
+    db: { condition: service_healthy }
+    redis: { condition: service_healthy }
 
 services:
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: documind-backend
-    restart: always
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
-    env_file:
-      - .env
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-      - DATABASE_URL=${DATABASE_URL}
-    depends_on:
-      - redis
-      - db
-    volumes:
-      - ./data:/app/data
-      - ./backend/logs:/app/logs
+  api:
+    <<: *app
+    ports: ["${BACKEND_PORT:-8000}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30  # first start downloads the embedding + reranker models
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: documind-frontend
-    restart: always
-    ports:
-      - "${FRONTEND_PORT:-5173}:5173"
-    environment:
-      - VITE_API_URL=http://localhost:${BACKEND_PORT:-8000}
-    depends_on:
-      - backend
+  worker:
+    <<: *app
+    command: ["arq", "app.worker.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
 
   db:
-    image: postgres:15-alpine
-    container_name: documind-db
-    restart: always
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-RagSystem}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-1234}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_DB: documind
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports: ["5432:5432"]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d documind"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   redis:
     image: redis:7-alpine
-    container_name: documind-redis
-    restart: always
-    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
+    restart: unless-stopped
+    # noeviction: the queue lives here too; LRU eviction could silently drop jobs.
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    ports: ["6379:6379"]
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
 volumes:
   postgres_data:
   redis_data:
+  uploads:
+  models:

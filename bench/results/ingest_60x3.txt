@@ -1,0 +1,12 @@
+docs=60 failed=0 chunks=480
+enqueue_all_s=0.37 (API accept rate 163.9 docs/s)
+end_to_end_s=15.7 docs_per_min=229.8 chunks_per_min=1838
+---
+docs=60 failed=0 chunks=480
+enqueue_all_s=0.39 (API accept rate 154.2 docs/s)
+end_to_end_s=15.8 docs_per_min=228.2 chunks_per_min=1826
+---
+docs=60 failed=0 chunks=480
+enqueue_all_s=0.29 (API accept rate 208.9 docs/s)
+end_to_end_s=18.1 docs_per_min=198.4 chunks_per_min=1587
+---

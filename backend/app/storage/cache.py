@@ -18,6 +18,7 @@ class CacheManager:
     Uses Redis if REDIS_URL is configured, otherwise falls back to local in-memory store.
     """
     _instance = None
+    VERSION_KEY = "resp:corpus_version"
 
     def __new__(cls):
         if cls._instance is None:
@@ -92,6 +93,7 @@ class CacheManager:
         user_id: str = "anonymous",
         filters: Optional[dict] = None,
         model_id: str = "unknown",
+        version: int = 1,
     ) -> str:
         normalized = " ".join(query.lower().strip().split())
         payload = json.dumps(
@@ -100,7 +102,7 @@ class CacheManager:
                 "u": user_id,
                 "f": filters or {},
                 "m": model_id,
-                "v": self._corpus_version,
+                "v": version,
             },
             sort_keys=True,
         )
@@ -113,8 +115,8 @@ class CacheManager:
         filters: Optional[dict] = None,
         model_id: str = "unknown",
     ) -> Optional[dict]:
-        key = self._response_cache_key(query, user_id, filters, model_id)
-        
+        key = self._response_cache_key(query, user_id, filters, model_id, await self._version())
+
         if self.redis:
             try:
                 val = await self.redis.get(key)
@@ -139,8 +141,8 @@ class CacheManager:
         if not response.get("sources"):
             return # Only cache grounded responses
             
-        key = self._response_cache_key(query, user_id, filters, model_id)
-        
+        key = self._response_cache_key(query, user_id, filters, model_id, await self._version())
+
         if self.redis:
             try:
                 await self.redis.setex(key, ttl, json.dumps(response))
@@ -151,14 +153,23 @@ class CacheManager:
         self._local_store[key] = response
         self._local_ttls[key] = time.time() + ttl
 
+    async def _version(self) -> int:
+        # The version lives in Redis so a worker process that ingests can invalidate the API's cache.
+        if self.redis:
+            try:
+                return int(await self.redis.get(self.VERSION_KEY) or 0)
+            except Exception as e:
+                logger.warning(f"Redis version read error: {e}")
+        return self._corpus_version
+
     async def invalidate_responses(self):
         """Clear all response cache entries (call after new ingestion)."""
         self._corpus_version += 1
-        
+
         if self.redis:
             try:
-                # In Redis we use versioning in the key instead of scanning for keys
-                logger.info(f"Incremented corpus version to {self._corpus_version}")
+                # Versioned keys: old entries are never read again and expire by TTL.
+                logger.info(f"Corpus version now {await self.redis.incr(self.VERSION_KEY)}")
             except Exception as e:
                 logger.warning(f"Redis invalidation error: {e}")
         

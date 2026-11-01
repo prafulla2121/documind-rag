@@ -6,15 +6,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-from app.api.routes import query, ingest, admin, auth, models
+from app.api.routes import query, ingest, admin, auth, models, v1
 from app.api.dependencies import initialize_services
 from app.core.config import settings
+from app.core.telemetry import RequestContextMiddleware, metrics_response, setup_logging
 
 # ── Logging ────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-)
+setup_logging(settings.LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
 
@@ -52,12 +50,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(RequestContextMiddleware)
+
 # ── Routes ─────────────────────────────────────────────
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(query.router, prefix="/api/query", tags=["query"])
 app.include_router(ingest.router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(models.router, prefix="/api")
+app.include_router(v1.router, prefix="/v1", tags=["platform"])
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    from app.api.dependencies import get_queue
+    queue = None
+    if settings.REDIS_URL:
+        try:
+            queue = await get_queue()
+        except Exception as e:
+            logger.warning(f"queue depth unavailable: {e}")
+    return await metrics_response(queue)
 
 
 @app.get("/health")
