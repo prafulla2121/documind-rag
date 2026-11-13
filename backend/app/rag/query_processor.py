@@ -1,6 +1,7 @@
 """
 Query Intelligence Layer.
-Processes raw user queries: intent detection, rewriting, filter extraction.
+Processes raw user queries: intent detection, rewriting.
+No filters are guessed from the query: a guessed field (e.g. department) that no chunk carries hides every document.
 """
 import re
 from dataclasses import dataclass, field
@@ -12,7 +13,6 @@ class ProcessedQuery:
     original: str
     rewritten: str
     intent: str  # "factual", "procedural", "comparison", "chitchat"
-    filters: dict = field(default_factory=dict)
     expanded_terms: list = field(default_factory=list)
     should_use_multi_query: bool = False
 
@@ -27,22 +27,14 @@ class QueryProcessor:
         "chitchat": [r"\b(hello|hi|hey)\b", r"\b(thanks|thank you)\b", r"how are you", r"good morning"],
     }
 
-    DEPARTMENT_KEYWORDS = {
-        "HR": ["leave", "vacation", "salary", "payroll", "benefits", "employee", "hiring", "onboarding"],
-        "IT": ["software", "laptop", "password", "vpn", "email", "account", "wifi", "network"],
-        "Finance": ["budget", "expense", "reimbursement", "invoice", "payment", "tax"],
-        "Legal": ["contract", "compliance", "policy", "nda", "agreement", "regulation"],
-    }
-
     async def refine_async(self, query: str, llm_provider=None) -> ProcessedQuery:
         """
         Asynchronously process and refine the query using an LLM if available.
         Handles spelling corrections and expansion.
         """
         intent = self._detect_intent(query)
-        filters = self._extract_filters(query)
         rewritten = self._rewrite(query)
-        
+
         # If LLM is available, use it for spelling correction and normalization
         if llm_provider:
             try:
@@ -66,7 +58,6 @@ class QueryProcessor:
             original=query,
             rewritten=rewritten,
             intent=intent,
-            filters=filters,
             expanded_terms=expanded,
             should_use_multi_query=(intent in ["factual", "procedural"] and len(query.split()) > 5),
         )
@@ -74,7 +65,6 @@ class QueryProcessor:
     def process(self, query: str) -> ProcessedQuery:
         """Synchronous version for fallback."""
         intent = self._detect_intent(query)
-        filters = self._extract_filters(query)
         rewritten = self._rewrite(query)
         expanded = self._expand_terms(query)
 
@@ -82,7 +72,6 @@ class QueryProcessor:
             original=query,
             rewritten=rewritten,
             intent=intent,
-            filters=filters,
             expanded_terms=expanded,
             should_use_multi_query=(intent in ["factual", "procedural"] and len(query.split()) > 5),
         )
@@ -93,15 +82,6 @@ class QueryProcessor:
             if any(re.search(p, query_lower) for p in patterns):
                 return intent
         return "factual"
-
-    def _extract_filters(self, query: str) -> dict:
-        filters = {}
-        query_lower = query.lower()
-        for dept, keywords in self.DEPARTMENT_KEYWORDS.items():
-            if any(kw in query_lower for kw in keywords):
-                filters["department"] = dept
-                break
-        return filters
 
     def _rewrite(self, query: str) -> str:
         replacements = {

@@ -105,8 +105,6 @@ class RAGPipeline:
         # 2. Retrieve
         stage_start = time.time()
         search_filters = filters.copy() if filters else {}
-        if processed.filters:
-            search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
         search_filters["tenant_id"] = tenant_id  # set last: a request filter cannot override it
 
@@ -235,8 +233,6 @@ class RAGPipeline:
         # 2. Retrieve
         yield {"type": "phase", "data": "retrieving_documents"}
         search_filters = filters.copy() if filters else {}
-        if processed.filters:
-            search_filters.update(processed.filters)
         search_filters["user_id"] = user_id
         search_filters["tenant_id"] = tenant_id  # set last: a request filter cannot override it
 
