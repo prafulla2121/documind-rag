@@ -4,8 +4,8 @@
 
 ## Live demo
 
-- App: `<FRONTEND_URL>`
-- API: `<BACKEND_URL>` (health check at `/health`)
+- App: `https://documind-rag-eight.vercel.app`
+- API: `https://documind-api-s1qk.onrender.com` (health check at `/health`)
 
 ![DocuMind demo, light theme](docs/media/ui-light.png)
 
