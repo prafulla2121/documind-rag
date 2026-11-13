@@ -1,0 +1,31 @@
+# Render Blueprint for the public demo backend (free plan, 512 MB, sleeps when idle, disk wiped on restart).
+# Secrets have no value here: Render asks for GEMINI_API_KEY and CORS_ORIGINS when the Blueprint is created.
+services:
+  - type: web
+    name: documind-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements-demo.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: DEMO_MODE
+        value: "true"
+      - key: PLATFORM_LLM_PROVIDER
+        value: gemini
+      - key: PLATFORM_LLM_MODEL
+        value: gemini-3.5-flash-lite
+      - key: EMBEDDING_PROVIDER
+        value: gemini
+      - key: RERANKER_ENABLED
+        value: "false"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
