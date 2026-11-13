@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../context/AuthContext";
+import { API_BASE } from "../lib/api";
 
 export default function ModelSelector({ onConfigChange }) {
   const { user } = useAuth();
@@ -13,7 +14,7 @@ export default function ModelSelector({ onConfigChange }) {
 
   // Load catalog on mount
   useEffect(() => {
-    fetch("/api/models/catalog")
+    fetch(`${API_BASE}/models/catalog`)
       .then((r) => r.json())
       .then((d) => {
         if (d && d.providers) {
@@ -25,7 +26,7 @@ export default function ModelSelector({ onConfigChange }) {
     // Load existing config if user logged in
     const token = localStorage.getItem("token");
     if (token) {
-        fetch("/api/models/config", {
+        fetch(`${API_BASE}/models/config`, {
             headers: {
                 "Authorization": `Bearer ${token}`
             }
@@ -50,7 +51,7 @@ export default function ModelSelector({ onConfigChange }) {
     
     try {
       // First validate
-      const res = await fetch("/api/models/validate", {
+      const res = await fetch(`${API_BASE}/models/validate`, {
         method: "POST",
         headers: { 
             "Content-Type": "application/json",
@@ -65,7 +66,7 @@ export default function ModelSelector({ onConfigChange }) {
         setValid(true);
         
         // If valid, save it
-        await fetch("/api/models/save", {
+        await fetch(`${API_BASE}/models/save`, {
             method: "POST",
             headers: { 
                 "Content-Type": "application/json",
@@ -92,8 +93,8 @@ export default function ModelSelector({ onConfigChange }) {
   const currentProvider = catalog[provider];
 
   return (
-    <div className="model-selector" style={{ background: '#fff', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '24px', marginBottom: '24px' }}>
-      <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: 'var(--text-main)' }}>🤖 AI Model Settings</h3>
+    <div className="model-selector" style={{ border: '1px solid var(--border-color)', borderRadius: '8px', padding: '24px', marginBottom: '24px' }}>
+      <h3 style={{ fontSize: '18px', fontWeight: '600', marginBottom: '20px', color: 'var(--text-main)' }}>AI model settings</h3>
 
       <div style={{ marginBottom: '16px' }}>
         <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '6px' }}>Provider</label>
@@ -126,7 +127,7 @@ export default function ModelSelector({ onConfigChange }) {
                 const isFree = currentProvider.free_models?.includes(m);
                 return (
                   <option key={m} value={m}>
-                    {m}{isFree ? ' ⚡ FREE' : ''}
+                    {m}{isFree ? ' (free)' : ''}
                   </option>
                 );
               })}
@@ -170,7 +171,7 @@ export default function ModelSelector({ onConfigChange }) {
                 border: '1px solid #bbf7d0',
                 lineHeight: '1.4'
             }}>
-              ⚡ <strong>{model}</strong> is a <strong>FREE</strong> model. 
+              <strong>{model}</strong> is a <strong>FREE</strong> model. 
               {provider === 'gemini' && " Get your key from Google AI Studio (no billing required)."}
               {provider === 'groq' && " Groq offers this model for free within their rate limits."}
               {provider === 'ollama' && " Running locally on your machine—no internet or keys needed."}
@@ -205,10 +206,10 @@ export default function ModelSelector({ onConfigChange }) {
           cursor: (validating || (!apiKey && currentProvider?.key_required)) ? 'not-allowed' : 'pointer' 
         }}
       >
-        {validating ? "Testing..." : "✓ Test & Save Configuration"}
+        {validating ? "Testing..." : "Test & save Configuration"}
       </button>
 
-      {valid === true && <p style={{ color: '#2e7d32', fontSize: '14px', marginTop: '12px', fontWeight: '500' }}>✅ Configuration saved successfully!</p>}
+      {valid === true && <p style={{ color: '#2e7d32', fontSize: '14px', marginTop: '12px', fontWeight: '500' }}>Configuration saved.</p>}
       {valid === false && <p style={{ color: '#d32f2f', fontSize: '14px', marginTop: '12px', fontWeight: '500' }}>❌ Connection failed. Check your API key or model name.</p>}
     </div>
   );

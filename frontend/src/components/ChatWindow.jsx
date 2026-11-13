@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useChat } from '../context/ChatContext';
 import MessageBubble from './MessageBubble';
 import ChatModelSelector from './ChatModelSelector';
+import { REPO_URL } from '../lib/api';
 
 const SUGGESTIONS = [
   "What is our vacation policy?",
@@ -10,7 +11,7 @@ const SUGGESTIONS = [
   "How do I reset my password?",
 ];
 
-export default function ChatWindow() {
+export default function ChatWindow({ demo = null }) {
   const {
     messages,
     isLoading,
@@ -60,12 +61,11 @@ export default function ChatWindow() {
     <div className="main-content">
       {/* Header */}
       <div className="chat-header" style={{ justifyContent: 'space-between' }}>
-        <h2>{currentSession?.title || 'New Conversation'} ⌵</h2>
+        <h2>{currentSession?.title || 'New conversation'}</h2>
         {messages.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="header-actions">
             <button
-              className="nav-item"
-              style={{ width: 'auto', padding: '6px 12px' }}
+              className="btn-ghost"
               onClick={() => {
                 const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(messages, null, 2));
                 const downloadAnchorNode = document.createElement('a');
@@ -76,11 +76,10 @@ export default function ChatWindow() {
                 downloadAnchorNode.remove();
               }}
             >
-              📥 JSON
+              Export JSON
             </button>
             <button
-              className="nav-item"
-              style={{ width: 'auto', padding: '6px 12px' }}
+              className="btn-ghost"
               onClick={() => {
                 const mdContent = messages.map(m => `### ${m.role.toUpperCase()}\n\n${m.content}\n\n---`).join('\n\n');
                 const dataStr = "data:text/markdown;charset=utf-8," + encodeURIComponent(mdContent);
@@ -92,7 +91,7 @@ export default function ChatWindow() {
                 downloadAnchorNode.remove();
               }}
             >
-              📝 MD
+              Export MD
             </button>
           </div>
         )}
@@ -114,14 +113,30 @@ export default function ChatWindow() {
         )}
         {messages.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-state-icon">🧠</div>
-            <h3>How can I help you today?</h3>
+            <h3>DocuMind</h3>
             <p>
-              I can help you find information about company policies, procedures,
-              IT support, HR matters, and anything in our knowledge base.
+              Ask questions about your documents. Answers come from hybrid search
+              (vectors + BM25) over the indexed text and cite the sections they used.
             </p>
+            <p className="empty-links">
+              <a href={REPO_URL} target="_blank" rel="noreferrer">Source code on GitHub</a>
+            </p>
+            {demo && (
+              <div className="demo-notice">
+                <strong>Demo:</strong> data resets when the server restarts. First visit can take
+                about a minute while the free server wakes up. Uploads are visible to other
+                visitors, so do not upload private files.
+              </div>
+            )}
+            {demo && !demo.llm_ready && (
+              <div className="demo-notice warn" role="alert">
+                No Gemini API key is set on the server, so answers are not generated: you will see
+                the retrieved source text instead. Retrieval and citations still work.
+              </div>
+            )}
+            {demo && <div className="suggestion-label">Try a question about the sample document, the Harbor HL-7 lantern guide:</div>}
             <div className="suggestion-chips">
-              {SUGGESTIONS.map((s, i) => (
+              {(demo?.examples?.length ? demo.examples : SUGGESTIONS).map((s, i) => (
                 <button
                   key={i}
                   className={`suggestion-chip`}
@@ -150,20 +165,26 @@ export default function ChatWindow() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Message RagSystem..."
+              placeholder="Ask a question about the documents…"
+              aria-label="Your question"
               rows={1}
             />
           </div>
           <div className="input-footer">
-            <button className="plus-button" title="Attach file">+</button>
+            <button
+              className="plus-button"
+              title="Add documents"
+              aria-label="Add documents"
+              onClick={() => window.dispatchEvent(new CustomEvent('navigate', { detail: 'upload' }))}
+            >+</button>
             <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-               <ChatModelSelector />
+               <ChatModelSelector readOnly={Boolean(demo)} />
                {isLoading ? (
-                <button className="send-button-mini" onClick={cancelStreaming} title="Stop generation">
+                <button className="send-button-mini" onClick={cancelStreaming} title="Stop generation" aria-label="Stop generation">
                   ■
                 </button>
                ) : (
-                <button className="send-button-mini" onClick={regenerateLastResponse} disabled={!messages.some(m => m.role === 'assistant')} title="Regenerate last response">
+                <button className="send-button-mini" onClick={regenerateLastResponse} disabled={!messages.some(m => m.role === 'assistant')} title="Regenerate last response" aria-label="Regenerate last response">
                   ↻
                 </button>
                )}
@@ -171,14 +192,16 @@ export default function ChatWindow() {
                 className="send-button-mini"
                 onClick={() => handleSend()}
                 disabled={isLoading || !input.trim()}
+                title="Send"
+                aria-label="Send"
               >
-                ➤
+                ↑
               </button>
             </div>
           </div>
         </div>
-        <div style={{textAlign: 'center', fontSize: '11px', color: '#999', marginTop: '12px'}}>
-          RagSystem is AI and can make mistakes. Please double-check responses.
+        <div className="input-disclaimer">
+          Answers can be wrong. Check them against the cited sources.
         </div>
       </div>
     </div>

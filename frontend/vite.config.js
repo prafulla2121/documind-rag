@@ -12,6 +12,10 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_GOOGLE_CLIENT_ID': JSON.stringify(
         localEnv.VITE_GOOGLE_CLIENT_ID || rootEnv.VITE_GOOGLE_CLIENT_ID || ''
       ),
+      // Backend origin for a hosted build (e.g. Vercel → Render). Empty = same origin / dev proxy.
+      'import.meta.env.VITE_API_URL': JSON.stringify(
+        localEnv.VITE_API_URL || rootEnv.VITE_API_URL || ''
+      ),
     },
     server: {
       port: 5173,

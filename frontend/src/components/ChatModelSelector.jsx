@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE } from '../lib/api';
 
-export default function ChatModelSelector() {
+export default function ChatModelSelector({ readOnly = false }) {
   const [config, setConfig] = useState(null);
   const [isOpen, setIsOpen] = useState(false);
   const { user } = useAuth();
@@ -9,11 +10,10 @@ export default function ChatModelSelector() {
   useEffect(() => {
     const fetchConfig = async () => {
       try {
+        // Signed-out visitors (the public demo) get the server's default model.
         const token = localStorage.getItem('token');
-        if (!token) return;
-        
-        const res = await fetch('/api/models/config', {
-          headers: { 'Authorization': `Bearer ${token}` }
+        const res = await fetch(`${API_BASE}/models/config`, {
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
         });
         const data = await res.json();
         if (data && data.provider) {
@@ -35,6 +35,9 @@ export default function ChatModelSelector() {
   if (!config) {
     return <div className="model-badge">Loading model...</div>;
   }
+  if (readOnly) {
+    return <div className="model-badge" title="Model used by the demo server">{config.model_name}</div>;
+  }
 
   const modelLabel = config.model_name || "Llama 3";
   const providerLabel = config.provider === 'gemini' ? 'Gemini' : 
@@ -49,7 +52,7 @@ export default function ChatModelSelector() {
         onClick={() => setIsOpen(!isOpen)}
         title="Change AI model in settings"
       >
-        {modelLabel} ⌵
+        {modelLabel}
       </div>
       
       {isOpen && (
@@ -65,7 +68,7 @@ export default function ChatModelSelector() {
               window.dispatchEvent(new CustomEvent('navigate', { detail: 'profile' }));
               setIsOpen(false);
           }}>
-            ⚙ Change Model in Settings
+            Change model in settings
           </div>
         </div>
       )}
