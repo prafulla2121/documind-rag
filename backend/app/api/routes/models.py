@@ -2,7 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from app.providers.registry import PROVIDER_CATALOG, get_llm_provider
 from app.providers.base import ModelConfig
-from app.core.security import get_current_user
+from app.core.config import settings
+from app.core.security import block_in_demo, get_current_user
 from app.api.dependencies import get_metadata_db
 from app.storage.metadata_db import MetadataDB
 from app.core.vault import vault
@@ -21,7 +22,7 @@ async def get_catalog():
     """Returns all supported providers and their models"""
     return {"providers": PROVIDER_CATALOG}
 
-@router.post("/validate")
+@router.post("/validate", dependencies=[Depends(block_in_demo)])
 async def validate_api_key(req: ModelConfigRequest, current_user=Depends(get_current_user)):
     """Test if a user's API key is valid before saving"""
     try:
@@ -33,7 +34,7 @@ async def validate_api_key(req: ModelConfigRequest, current_user=Depends(get_cur
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"API key invalid or error: {str(e)}")
 
-@router.post("/save")
+@router.post("/save", dependencies=[Depends(block_in_demo)])
 async def save_model_config(req: ModelConfigRequest, current_user=Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
     """Save the user's API key + model preference"""
     config_dict = req.model_dump()
@@ -45,14 +46,15 @@ async def save_model_config(req: ModelConfigRequest, current_user=Depends(get_cu
 
 @router.get("/config")
 async def get_model_config(current_user=Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
-    config = await db.get_user_model_config(current_user["id"])
+    config = None if settings.DEMO_MODE else await db.get_user_model_config(current_user["id"])
     if not config:
         # Default config
+        # Server default (PLATFORM_LLM_*); its API key is never sent to the browser.
         config = {
-            "provider": "ollama",
-            "model_name": "llama3",
+            "provider": settings.PLATFORM_LLM_PROVIDER,
+            "model_name": settings.PLATFORM_LLM_MODEL,
             "api_key": "",
-            "api_base_url": "http://localhost:11434",
+            "api_base_url": settings.PLATFORM_LLM_BASE_URL,
             "temperature": 0.1
         }
     else:

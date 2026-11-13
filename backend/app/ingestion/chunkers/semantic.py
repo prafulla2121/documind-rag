@@ -14,12 +14,18 @@ class SemanticChunker:
     def __init__(self, buffer_size: int = 1, breakpoint_percentile: float = 95):
         self.buffer_size = buffer_size
         self.breakpoint_percentile = breakpoint_percentile
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(settings.EMBEDDING_MODEL)
-        except ImportError:
-            logger.error("sentence-transformers not installed. SemanticChunking disabled.")
-            self.model = None
+        self._model = None
+
+    @property
+    def model(self):
+        # Loaded on first semantic chunk, not when every IngestionPipeline is built.
+        if self._model is None:
+            try:
+                from sentence_transformers import SentenceTransformer
+                self._model = SentenceTransformer(settings.EMBEDDING_MODEL)
+            except ImportError:
+                logger.error("sentence-transformers not installed. SemanticChunking disabled.")
+        return self._model
 
     def chunk(self, text: str, metadata: Dict[str, Any]) -> List[Chunk]:
         if not self.model or not text.strip():

@@ -40,9 +40,9 @@ class ContextBuilder:
             source_key = (
                 metadata.get("video_id"),
                 int(float(metadata.get("start_seconds") or 0)),
-            ) if source_type == "youtube" else title
-            
-            # Only add duplicate document sources once; keep YouTube timestamps distinct.
+            ) if source_type == "youtube" else (title, metadata.get("section_heading", ""))
+
+            # One source per document section (so answers show which parts they used); YouTube per timestamp.
             if not any(s.get("_source_key") == source_key for s in sources):
                 sources.append({
                     "_source_key": source_key,

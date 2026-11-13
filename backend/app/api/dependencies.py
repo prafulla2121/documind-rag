@@ -3,8 +3,9 @@ API Dependencies — shared dependency injection for FastAPI routes.
 Initializes and provides singleton instances of all RAG components.
 """
 import logging
+from pathlib import Path
 from app.core.config import settings
-from app.ingestion.embedder import Embedder
+from app.ingestion.embedder import make_embedder
 from app.storage.vector_store import VectorStore
 from app.storage.cache import CacheManager
 from app.storage.metadata_db import MetadataDB
@@ -23,17 +24,17 @@ logger = logging.getLogger(__name__)
 _pipeline: RAGPipeline | None = None
 _metadata_db: MetadataDB | None = None
 _vector_store = None
-_embedder: Embedder | None = None
+_embedder = None
 _bm25 = None
 _cache: CacheManager | None = None
 _tracer: RAGTracer | None = None
 _queue = None  # arq pool (Redis); also used for rate limits
 
 
-def get_embedder() -> Embedder:
+def get_embedder():
     global _embedder
     if _embedder is None:
-        _embedder = Embedder(model_name=settings.EMBEDDING_MODEL)
+        _embedder = make_embedder()
     return _embedder
 
 
@@ -72,9 +73,14 @@ async def get_queue():
 
 def get_platform_llm():
     from app.providers.base import ModelConfig
-    from app.providers.registry import get_llm_provider
+    from app.providers.registry import PROVIDER_CATALOG, get_llm_provider
+    provider = settings.PLATFORM_LLM_PROVIDER
+    if PROVIDER_CATALOG.get(provider, {}).get("key_required") and not settings.PLATFORM_LLM_API_KEY:
+        # No key yet (e.g. a fresh Space): answer with the stub instead of failing every query.
+        logger.warning("PLATFORM_LLM_API_KEY is empty for provider %s: using the stub LLM", provider)
+        provider = "stub"
     return get_llm_provider(ModelConfig(
-        provider=settings.PLATFORM_LLM_PROVIDER,
+        provider=provider,
         model_name=settings.PLATFORM_LLM_MODEL,
         api_key=settings.PLATFORM_LLM_API_KEY,
         api_base_url=settings.PLATFORM_LLM_BASE_URL,
@@ -121,6 +127,25 @@ def get_pipeline() -> RAGPipeline:
     return _pipeline
 
 
+SAMPLE_DOC = Path(__file__).resolve().parents[3] / "evals" / "harbor_lamp_guide.md"
+
+
+async def _preload_sample_doc(db: MetadataDB):
+    """Demo mode: load the eval sample doc for anonymous visitors so they can ask right away."""
+    if not SAMPLE_DOC.exists():
+        logger.warning(f"Sample doc missing, nothing preloaded: {SAMPLE_DOC}")
+        return
+    if await db.find_document_by_filename(SAMPLE_DOC.name, "md", "anonymous"):
+        return
+    from app.ingestion.pipeline import IngestionPipeline
+    result = IngestionPipeline().ingest_file(str(SAMPLE_DOC), user_id="anonymous")
+    await db.add_document(doc_id=result["doc_id"], filename=SAMPLE_DOC.name, source_type="md",
+                          title="Harbor HL-7 lantern guide", user_id="anonymous")
+    await db.update_document(doc_id=result["doc_id"], num_chunks=result.get("num_chunks", 0),
+                             status=result.get("status", "completed"))
+    logger.info(f"Demo sample doc preloaded: {result.get('num_chunks', 0)} chunks")
+
+
 async def initialize_services():
     """Called on startup — initializes DB, loads indexes."""
     logger.info("🚀 Initializing services...")
@@ -132,6 +157,9 @@ async def initialize_services():
         google_client_id=settings.GOOGLE_CLIENT_ID,
         google_client_secret=settings.GOOGLE_CLIENT_SECRET,
     )
+
+    if settings.DEMO_MODE:
+        await _preload_sample_doc(db)
 
     # Heavy RAG components are initialized lazily when documents are ingested or
     # queried, so auth and admin routes can start without downloading models.

@@ -1,7 +1,9 @@
 import asyncio
-import google.generativeai as genai
 from .base import BaseLLMProvider, ModelConfig
 from typing import AsyncGenerator, List, Dict
+
+genai = None
+
 
 class GeminiProvider(BaseLLMProvider):
     """
@@ -10,6 +12,9 @@ class GeminiProvider(BaseLLMProvider):
     """
     def __init__(self, config: ModelConfig):
         super().__init__(config)
+        global genai
+        # Imported on first use: the SDK pulls in grpc, which the rest of the app never needs.
+        import google.generativeai as genai
         genai.configure(api_key=config.api_key)
         self.model = genai.GenerativeModel(config.model_name)
 

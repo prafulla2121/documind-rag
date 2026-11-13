@@ -19,7 +19,8 @@ from app.models.schemas import (
     YouTubeIngestResponse,
 )
 from app.core.config import settings
-from app.core.security import get_current_user
+from app.core.security import block_in_demo, get_current_user
+from app.core.tenancy import demo_rate_limit
 from app.api.dependencies import get_metadata_db, get_bm25, get_cache
 from app.ingestion.parsers.youtube_parser import (
     InvalidYouTubeURLError,
@@ -33,6 +34,14 @@ router = APIRouter()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".html", ".htm", ".txt", ".md", ".csv"}
 INGEST_TASKS = {}
+
+
+async def _read_capped(file: UploadFile) -> bytes:
+    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+    content = await file.read(limit + 1)
+    if len(content) > limit:
+        raise HTTPException(413, f"File larger than {settings.MAX_UPLOAD_MB} MB")
+    return content
 
 
 def _normalize_web_url(url: str) -> str:
@@ -214,7 +223,7 @@ async def _process_file_background(filepath: str, filename: str, doc_id: str, ta
             pass
 
 
-@router.post("/upload", response_model=IngestResponse)
+@router.post("/upload", response_model=IngestResponse, dependencies=[Depends(demo_rate_limit)])
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
@@ -236,8 +245,8 @@ async def upload_document(
 
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
+    content = await _read_capped(file)
     try:
-        content = await file.read()
         with open(temp_path, "wb") as f:
             f.write(content)
     except Exception as e:
@@ -268,7 +277,7 @@ async def upload_document(
     }
 
 
-@router.post("/upload-multiple")
+@router.post("/upload-multiple", dependencies=[Depends(demo_rate_limit)])
 async def upload_multiple(
     background_tasks: BackgroundTasks,
     files: List[UploadFile] = File(...),
@@ -289,7 +298,7 @@ async def upload_multiple(
 
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
 
-        content = await file.read()
+        content = await _read_capped(file)
         with open(temp_path, "wb") as f:
             f.write(content)
 
@@ -312,7 +321,7 @@ async def upload_multiple(
     return {"message": f"Queued {len(results)} files", "results": results}
 
 
-@router.post("/url", response_model=IngestResponse)
+@router.post("/url", response_model=IngestResponse, dependencies=[Depends(block_in_demo)])
 async def ingest_url(
     request: URLIngestRequest,
     background_tasks: BackgroundTasks,
@@ -390,7 +399,7 @@ async def _process_sitemap_background(urls: list[str], task_id: str, user_id: st
         INGEST_TASKS[task_id].update({"status": "failed", "progress": 100, "error": str(exc), "finished_at": int(time.time())})
 
 
-@router.post("/sitemap", response_model=IngestResponse)
+@router.post("/sitemap", response_model=IngestResponse, dependencies=[Depends(block_in_demo)])
 async def ingest_sitemap(
     request: SitemapIngestRequest,
     background_tasks: BackgroundTasks,
@@ -437,7 +446,7 @@ async def ingest_connector(
     )
 
 
-@router.post("/youtube", response_model=YouTubeIngestResponse)
+@router.post("/youtube", response_model=YouTubeIngestResponse, dependencies=[Depends(block_in_demo)])
 async def ingest_youtube(
     request: YouTubeIngestRequest,
     current_user=Depends(get_current_user),
@@ -529,7 +538,7 @@ async def list_documents(current_user=Depends(get_current_user)):
     return {"documents": docs}
 
 
-@router.delete("/documents/{doc_id}")
+@router.delete("/documents/{doc_id}", dependencies=[Depends(block_in_demo)])
 async def delete_document(doc_id: str, current_user=Depends(get_current_user)):
     db = get_metadata_db()
     deleted = await db.delete_document(doc_id, current_user["id"])
@@ -543,7 +552,7 @@ async def delete_document(doc_id: str, current_user=Depends(get_current_user)):
     return {"status": "success"}
 
 
-@router.post("/documents/{doc_id}/reindex")
+@router.post("/documents/{doc_id}/reindex", dependencies=[Depends(block_in_demo)])
 async def reindex_document(
     doc_id: str,
     background_tasks: BackgroundTasks,
@@ -565,7 +574,7 @@ async def reindex_document(
     return {"status": "processing", "task_id": task_id}
 
 
-@router.post("/recrawl-stale")
+@router.post("/recrawl-stale", dependencies=[Depends(block_in_demo)])
 async def recrawl_stale_web_sources(
     background_tasks: BackgroundTasks,
     current_user=Depends(get_current_user),

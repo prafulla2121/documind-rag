@@ -3,9 +3,10 @@ Cross-Encoder Reranker.
 Takes top-K candidates from retrieval and re-scores using (query, passage) pairs.
 Much more accurate than bi-encoder similarity alone.
 """
-from sentence_transformers import CrossEncoder
 from typing import List, Dict
 import logging
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +21,20 @@ class Reranker:
         return cls._instance
 
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", top_k: int = 5):
-        if self._model is None:
+        if self._model is None and settings.RERANKER_ENABLED:
             logger.info(f"Loading reranker model: {model_name}")
+            # Imported here so a process with the reranker off never loads torch.
+            from sentence_transformers import CrossEncoder
             self._model = CrossEncoder(model_name, max_length=512)
-            self.top_k = top_k
             logger.info("Reranker model loaded")
         self.top_k = top_k
 
     def rerank(self, query: str, candidates: List[Dict], limit: int | None = None) -> List[Dict]:
         if not candidates:
             return []
+        if self._model is None:
+            # RERANKER_ENABLED=false: keep the retriever's RRF order.
+            return candidates[:limit or self.top_k]
 
         # Create (query, passage) pairs
         pairs = [(query, self._rerank_text(doc)) for doc in candidates]

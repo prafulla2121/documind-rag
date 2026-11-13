@@ -8,7 +8,9 @@ import json
 from pydantic import BaseModel
 from app.models.schemas import QueryRequest, QueryResponse
 from app.core.security import get_current_user
-from app.api.dependencies import get_pipeline, get_metadata_db
+from app.api.dependencies import get_pipeline, get_metadata_db, get_platform_llm
+from app.core.config import settings
+from app.core.tenancy import demo_rate_limit
 from app.core.utils import count_tokens
 from app.providers.registry import get_llm_provider
 from app.providers.base import ModelConfig
@@ -28,7 +30,12 @@ class MessageEditRequest(BaseModel):
     message_id: str
     new_content: str
 
-@router.post("/", response_model=QueryResponse)
+def _shared_demo_user(user) -> bool:
+    # On the demo every signed-out visitor is "anonymous": don't list one visitor's chats to the next.
+    return settings.DEMO_MODE and user["id"] == "anonymous"
+
+
+@router.post("/", response_model=QueryResponse, dependencies=[Depends(demo_rate_limit)])
 async def query_endpoint(
     request: QueryRequest,
     current_user=Depends(get_current_user),
@@ -64,22 +71,14 @@ async def query_endpoint(
     custom_prompt = await db.get_user_custom_prompt(current_user["id"])
     rag_config = await db.get_user_rag_config(current_user["id"])
 
-    # Get LLM Provider from user config
-    config_dict = await db.get_user_model_config(current_user["id"])
-    if not config_dict:
-        config_dict = {
-            "provider": "ollama",
-            "model_name": "llama3",
-            "api_key": "",
-            "api_base_url": "http://localhost:11434",
-            "temperature": 0.1
-        }
-    else:
-        # Decrypt key before use
+    # Per-user model config; otherwise (and always on the demo) the server's PLATFORM_LLM_* settings.
+    config_dict = None if settings.DEMO_MODE else await db.get_user_model_config(current_user["id"])
+    if config_dict:
         if config_dict.get("api_key"):
             config_dict["api_key"] = vault.decrypt(config_dict["api_key"])
-            
-    provider = get_llm_provider(ModelConfig(**config_dict))
+        provider = get_llm_provider(ModelConfig(**config_dict))
+    else:
+        provider = get_platform_llm()
 
     try:
         if request.stream:
@@ -166,12 +165,16 @@ async def query_endpoint(
 
 @router.get("/sessions")
 async def get_sessions(current_user=Depends(get_current_user)):
+    if _shared_demo_user(current_user):
+        return {"sessions": []}
     db = get_metadata_db()
     sessions = await db.get_sessions(current_user["id"])
     return {"sessions": sessions}
 
 @router.get("/search")
 async def search_chat_history(q: str, current_user=Depends(get_current_user)):
+    if _shared_demo_user(current_user):
+        return {"results": []}
     db = get_metadata_db()
     results = await db.search_messages(q, current_user["id"])
     return {"results": results}

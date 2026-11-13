@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 
-from app.core.security import create_token, get_current_user, hash_password, verify_password
+from app.core.security import block_in_demo, create_token, get_current_user, hash_password, verify_password
 from app.core.config import settings
 from app.api.dependencies import get_metadata_db
 from app.storage.metadata_db import MetadataDB
@@ -78,12 +78,12 @@ async def read_users_me(current_user: dict = Depends(get_current_user), db: Meta
         "rag_config": rag_config
     }
 
-@router.post("/me/prompt")
+@router.post("/me/prompt", dependencies=[Depends(block_in_demo)])
 async def update_my_prompt(data: PromptUpdateRequest, current_user: dict = Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
     await db.update_user_custom_prompt(current_user["id"], data.prompt)
     return {"status": "success"}
 
-@router.post("/me/rag-config")
+@router.post("/me/rag-config", dependencies=[Depends(block_in_demo)])
 async def update_my_rag_config(data: RAGConfigUpdateRequest, current_user: dict = Depends(get_current_user), db: MetadataDB = Depends(get_metadata_db)):
     await db.update_user_rag_config(current_user["id"], data.config)
     return {"status": "success"}

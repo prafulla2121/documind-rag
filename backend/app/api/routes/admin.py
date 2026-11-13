@@ -3,7 +3,7 @@ Admin API Routes — system stats, cache management, health checks.
 """
 from fastapi import APIRouter, Depends
 
-from app.core.security import get_current_user
+from app.core.security import block_in_demo, get_current_user
 from app.api.dependencies import get_metadata_db, get_vector_store, get_bm25
 from app.storage.cache import CacheManager
 from app.rag.llm_client import OllamaClient
@@ -39,7 +39,7 @@ async def system_stats(current_user=Depends(get_current_user)):
     }
 
 
-@router.post("/cache/clear")
+@router.post("/cache/clear", dependencies=[Depends(block_in_demo)])
 async def clear_cache(current_user=Depends(get_current_user)):
     """Clear response cache."""
     cache = CacheManager()
@@ -47,7 +47,7 @@ async def clear_cache(current_user=Depends(get_current_user)):
     return {"message": "Response cache cleared"}
 
 
-@router.post("/bm25/rebuild")
+@router.post("/bm25/rebuild", dependencies=[Depends(block_in_demo)])
 async def rebuild_bm25(current_user=Depends(get_current_user)):
     """Rebuild BM25 index from current vector store."""
     bm25 = get_bm25()
