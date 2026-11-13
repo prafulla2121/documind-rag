@@ -356,7 +356,7 @@ export default function UploadPanel({ onUploadComplete, demo = null }) {
             {Object.entries(taskStatuses).map(([taskId, task]) => (
               <div key={taskId} className="task-item">
                 <div className="task-label">
-                  Task {taskId.slice(0, 8)} - {task.status}
+                  Task {taskId.slice(0, 8)} - {task.status}{task.error && `: ${task.error}`}
                 </div>
                 <div className="task-bar">
                   <div style={{ width: `${task.progress || 0}%` }} />

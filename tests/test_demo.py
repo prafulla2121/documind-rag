@@ -89,6 +89,10 @@ asyncio.run(go())
 assert "torch" not in sys.modules and "sentence_transformers" not in sys.modules
 print("ok")
 """
+    _run_demo_app(code, tmp_path)
+
+
+def _run_demo_app(code, tmp_path):
     root = Path(__file__).resolve().parent.parent
     env = {**__import__("os").environ, "DEMO_MODE": "true", "EMBEDDING_PROVIDER": "hash", "GEMINI_API_KEY": "",
            "PLATFORM_LLM_PROVIDER": "stub", "DATA_DIR": str(tmp_path), "UPLOAD_DIR": str(tmp_path / "up"),
@@ -96,3 +100,35 @@ print("ok")
            "SQLITE_DB_PATH": str(tmp_path / "m.db"), "REDIS_URL": ""}
     out = subprocess.run([sys.executable, "-c", code], cwd=root / "backend", env=env, capture_output=True, text=True, timeout=300)
     assert out.stdout.strip().endswith("ok"), out.stderr[-2000:]
+
+
+def test_demo_uploaded_pdf_is_answered_from(tmp_path):
+    """A guest uploads a PDF, then asks about it: it must come back as a source.
+    "leave"/"employee" once made the query processor add department=HR, a field no chunk has, so nothing matched."""
+    code = """
+import asyncio, httpx, fitz
+from app.main import app
+def pdf(text):
+    doc = fitz.open(); page = doc.new_page()
+    if text:
+        page.insert_text((72, 72), text)
+    return doc.tobytes()
+async def go():
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+            text = "Leave policy of Acme Corp.\\nEvery employee gets 24 paid leave days per year.\\nUnused leave can carry over up to 10 days."
+            r = await c.post("/api/ingest/upload", files={"file": ("leave.pdf", pdf(text), "application/pdf")})
+            assert r.status_code == 200, r.text
+            r = await c.post("/api/query/", json={"query": "How many paid leave days does an Acme employee get?", "stream": False})
+            assert r.status_code == 200, r.text
+            assert "leave.pdf" in [s["filename"] for s in r.json()["sources"]], r.text
+            # A PDF with no text layer (like a scan) says why it gave no chunks.
+            r = await c.post("/api/ingest/upload", files={"file": ("scan.pdf", pdf(""), "application/pdf")})
+            task = (await c.get(f"/api/ingest/tasks/{r.json()['task_id']}")).json()
+            assert task["status"] == "failed" and "No text found" in task["error"], task
+            for path in ("/api/models/catalog", "/api/models/config"):
+                assert (await c.get(path)).status_code == 200, path
+asyncio.run(go())
+print("ok")
+"""
+    _run_demo_app(code, tmp_path)

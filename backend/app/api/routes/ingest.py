@@ -208,6 +208,9 @@ async def _process_file_background(filepath: str, filename: str, doc_id: str, ta
         bm25.rebuild_from_vector_store()
         await get_cache().invalidate_responses()
         INGEST_TASKS[task_id].update({"status": "completed", "progress": 100, "num_chunks": result.get("num_chunks", 0), "finished_at": int(time.time())})
+        if not result.get("num_chunks"):
+            # Scanned PDFs are page images: there is no OCR, so nothing can be indexed.
+            INGEST_TASKS[task_id].update({"status": "failed", "error": "No text found in this file. Scanned PDFs (images only) are not supported."})
 
         logger.info(f"✅ Background ingestion complete: {filename} → {result.get('num_chunks', 0)} chunks")
     except Exception as e:
