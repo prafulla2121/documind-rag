@@ -2,6 +2,29 @@
 
 **Chat with your own documents.** Upload PDFs, Word files, web pages or YouTube videos, then ask questions and get answers with source citations — using a hybrid (vector + BM25) retrieval pipeline and the LLM of your choice.
 
+## Live demo
+
+- App: `https://documind-rag-eight.vercel.app`
+- API: `https://documind-api-s1qk.onrender.com` (health check at `/health`)
+
+![DocuMind demo, light theme](docs/media/ui-light.png)
+
+The demo is a guest-only copy with the sample document [`evals/harbor_lamp_guide.md`](evals/harbor_lamp_guide.md) already loaded. Data resets when the server restarts, and the first visit can take about a minute while the free server wakes up.
+
+It runs in `DEMO_MODE` on a 512 MB free server, so some things are switched off compared with the full local setup:
+
+| Full local setup | Public demo |
+| --- | --- |
+| Local embeddings (sentence-transformers, torch) | Gemini embeddings over the API (`gemini-embedding-001`) |
+| Cross-encoder reranker | Off: results keep the hybrid (vector + BM25) RRF order |
+| URL, sitemap and YouTube ingestion | Off (the server does not fetch user-given URLs) |
+| Uploads up to 20 MB | Uploads up to 5 MB, same file types |
+| Postgres, Redis, queue worker, `/v1` platform API | SQLite and an in-process cache only; `/v1` is not usable |
+| Accounts, saved chats, per-user model keys | Guest only; per-user settings are off |
+| No query limit | 20 questions or uploads per hour per IP, 300 per day in total |
+
+Deploy files: [`render.yaml`](render.yaml) (backend on Render) and [`backend/requirements-demo.txt`](backend/requirements-demo.txt) (no torch). The frontend goes on Vercel with `VITE_API_URL` set to the backend URL.
+
 ## Architecture
 
 ```mermaid
@@ -255,6 +278,8 @@ From [`.env.example`](.env.example):
 | `BACKEND_PORT` / `FRONTEND_PORT` | `8000` / `5173` | Ports |
 
 Also read by the backend (see `backend/app/core/config.py`): `DATABASE_URL`, `REDIS_URL` (optional, in-memory cache if empty) and `ENCRYPTION_KEY` (encrypts stored API keys — set your own).
+
+Demo and hosting settings: `DEMO_MODE`, `CORS_ORIGINS` (extra allowed origins, comma-separated), `GEMINI_API_KEY`, `EMBEDDING_PROVIDER` (`local`, `gemini` or the keyless `hash` stub), `GEMINI_EMBEDDING_MODEL`, `GEMINI_EMBEDDING_DIM`, `RERANKER_ENABLED`, `DEMO_QUERIES_PER_HOUR`, `DEMO_QUERIES_PER_DAY`, `MAX_UPLOAD_MB`, and `VITE_API_URL` for the frontend.
 
 ## Project structure
 

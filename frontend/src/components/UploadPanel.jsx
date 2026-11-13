@@ -12,16 +12,16 @@ import {
 import YouTubeInput from './YouTubeInput';
 
 const FILE_TYPE_ICONS = {
-  pdf: '📕',
-  docx: '📘',
-  html: '🌐',
-  htm: '🌐',
-  txt: '📝',
-  md: '📝',
-  csv: '📊',
+  pdf: 'PDF',
+  docx: 'DOC',
+  html: 'WEB',
+  htm: 'WEB',
+  txt: 'TXT',
+  md: 'MD',
+  csv: 'CSV',
 };
 
-export default function UploadPanel({ onUploadComplete }) {
+export default function UploadPanel({ onUploadComplete, demo = null }) {
   const [activeTab, setActiveTab] = useState('files');
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
@@ -71,6 +71,13 @@ export default function UploadPanel({ onUploadComplete }) {
 
   const handleUpload = async (files) => {
     if (!files || files.length === 0) return;
+    // Check the size here too, so a visitor does not wait for a large upload the server will refuse.
+    const maxMb = demo?.max_upload_mb;
+    const tooBig = maxMb ? Array.from(files).find(f => f.size > maxMb * 1024 * 1024) : null;
+    if (tooBig) {
+      setUploadStatus({ type: 'error', message: `${tooBig.name} is larger than ${maxMb} MB, the demo limit.` });
+      return;
+    }
     setUploading(true);
     setUploadStatus(null);
 
@@ -190,16 +197,23 @@ export default function UploadPanel({ onUploadComplete }) {
 
   const getFileIcon = (filename) => {
     const ext = filename.split('.').pop()?.toLowerCase() || '';
-    return FILE_TYPE_ICONS[ext] || '📄';
+    return FILE_TYPE_ICONS[ext] || 'FILE';
   };
 
   return (
     <div className="upload-panel">
       <div className="upload-section">
-        <h3>Knowledge Base</h3>
-        <p>Configure the documents and data sources used to power your assistant's answers.</p>
+        <h3>Documents</h3>
+        <p>The documents the assistant searches when it answers.</p>
+        {demo && (
+          <div className="demo-notice">
+            On the demo you can upload files up to {demo.max_upload_mb} MB (PDF, DOCX, TXT, MD, HTML, CSV).
+            Website, sitemap and YouTube import are turned off here; they work in the full local setup.
+            Uploads are visible to other visitors until the server restarts.
+          </div>
+        )}
 
-        <div className="upload-tabs" role="tablist" aria-label="Ingestion sources">
+        {!demo && <div className="upload-tabs" role="tablist" aria-label="Ingestion sources">
           <button
             type="button"
             className={activeTab === 'files' ? 'active' : ''}
@@ -221,13 +235,13 @@ export default function UploadPanel({ onUploadComplete }) {
           >
             Connectors
           </button>
-        </div>
+        </div>}
 
         {activeTab === 'files' ? (
           <>
-        <div className="ingest-methods">
-          {/* URL Ingest */}
-          <div className="url-ingest-box">
+        <div className={`ingest-methods ${demo ? 'single' : ''}`}>
+          {/* URL Ingest (server-side fetching is off on the public demo) */}
+          {!demo && <div className="url-ingest-box">
             <h4>Add Website</h4>
             <form onSubmit={handleUrlSubmit} className="url-form">
               <input 
@@ -274,19 +288,21 @@ export default function UploadPanel({ onUploadComplete }) {
                 Sitemap
               </button>
             </form>
-          </div>
+          </div>}
 
           {/* Dropzone */}
           <div
             className={`dropzone ${dragOver ? 'drag-over' : ''}`}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
             onClick={() => fileInputRef.current?.click()}
             onDrop={handleDrop}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
           >
-            <div className="dropzone-icon">📁</div>
-            <h4>Upload Files</h4>
-            <span style={{fontSize: '12px', color: '#999'}}>PDF, DOCX, TXT, etc.</span>
+            <h4>{uploading ? 'Uploading…' : 'Upload files'}</h4>
+            <span className="dropzone-hint">Drop files here or click to choose. PDF, DOCX, TXT, MD, HTML, CSV.</span>
           </div>
         </div>
 
@@ -330,27 +346,20 @@ export default function UploadPanel({ onUploadComplete }) {
 
         {/* Upload Status */}
         {uploadStatus && (
-          <div style={{
-            padding: '12px', 
-            borderRadius: '8px', 
-            marginBottom: '24px',
-            fontSize: '14px',
-            backgroundColor: uploadStatus.type === 'success' ? '#d1fae5' : '#fee2e2',
-            color: uploadStatus.type === 'success' ? '#065f46' : '#991b1b'
-          }}>
+          <div className={`status-banner ${uploadStatus.type}`} role="status">
             {uploadStatus.message}
           </div>
         )}
 
         {Object.keys(taskStatuses).length > 0 && (
-          <div style={{ marginBottom: '20px', display: 'grid', gap: '8px' }}>
+          <div className="task-list">
             {Object.entries(taskStatuses).map(([taskId, task]) => (
-              <div key={taskId} style={{ border: '1px solid #eee', borderRadius: '8px', padding: '8px 10px' }}>
-                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+              <div key={taskId} className="task-item">
+                <div className="task-label">
                   Task {taskId.slice(0, 8)} - {task.status}
                 </div>
-                <div style={{ height: '6px', background: '#f1f1f1', borderRadius: '999px', overflow: 'hidden' }}>
-                  <div style={{ height: '100%', width: `${task.progress || 0}%`, background: '#d97757' }} />
+                <div className="task-bar">
+                  <div style={{ width: `${task.progress || 0}%` }} />
                 </div>
               </div>
             ))}
@@ -359,41 +368,26 @@ export default function UploadPanel({ onUploadComplete }) {
 
         {/* Document List */}
         <div className="documents-section">
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', overflowX: 'auto', paddingBottom: '8px' }}>
+          {!demo && <div className="collection-chips">
             {['all', 'default', 'research', 'legal', 'finance'].map(c => (
               <button
                 key={c}
                 onClick={() => setActiveCollection(c)}
-                style={{
-                  padding: '4px 12px',
-                  borderRadius: '999px',
-                  border: '1px solid var(--border-color)',
-                  backgroundColor: activeCollection === c ? var('--accent-color') : 'transparent',
-                  color: activeCollection === c ? '#fff' : 'var(--text-muted)',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap'
-                }}
+                className={activeCollection === c ? 'active' : ''}
               >
                 {c.charAt(0).toUpperCase() + c.slice(1)}
               </button>
             ))}
-          </div>
+          </div>}
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h4>Ingested Sources ({documents.length})</h4>
+          <div className="documents-toolbar">
+            <h4>Indexed documents ({documents.length})</h4>
             <input
               type="text"
               placeholder="Search documents..."
+              aria-label="Search documents"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                padding: '6px 12px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-                fontSize: '13px',
-                width: '200px'
-              }}
             />
           </div>
           <div className="doc-list">
@@ -408,11 +402,11 @@ export default function UploadPanel({ onUploadComplete }) {
                 <div className="doc-info">
                   <div className="doc-name" title={doc.filename}>{doc.filename}</div>
                   <div className="doc-meta">
-                    {doc.num_chunks} chunks • {doc.source_type?.toUpperCase()}
+                    {doc.num_chunks} chunks · {doc.source_type?.toUpperCase()}
                   </div>
                 </div>
                 <div className={`doc-status ${doc.status}`}>{doc.status}</div>
-                <div className="doc-actions">
+                {!demo && <div className="doc-actions">
                   {doc.source_type === 'web' && (
                     <button type="button" onClick={() => handleReindexDocument(doc)} title="Re-index source">
                       Re-index
@@ -421,7 +415,7 @@ export default function UploadPanel({ onUploadComplete }) {
                   <button type="button" onClick={() => handleDeleteDocument(doc.id)} title="Delete source">
                     Delete
                   </button>
-                </div>
+                </div>}
               </div>
             ))}
           </div>

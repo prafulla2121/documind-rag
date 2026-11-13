@@ -24,9 +24,6 @@ class ContextCompressor:
         if not context_chunks:
             return ""
 
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        from sklearn.metrics.pairwise import cosine_similarity
-
         all_sentences = []
         for chunk in context_chunks:
             text = chunk.get("text", "")
@@ -38,6 +35,10 @@ class ContextCompressor:
 
         # Calculate similarity of each sentence to the query
         try:
+            # Not installed in the slim demo build: the except below falls back to whole chunks.
+            from sklearn.feature_extraction.text import TfidfVectorizer
+            from sklearn.metrics.pairwise import cosine_similarity
+
             vectorizer = TfidfVectorizer().fit_transform(all_sentences + [query])
             vectors = vectorizer.toarray()
 
@@ -56,4 +57,4 @@ class ContextCompressor:
         except Exception as e:
             logger.warning(f"Context compression failed: {e}")
             # Fallback to just joining chunks
-            return " ".join([c.get("text", "") for c in context_chunks])
+            return "\n\n".join([c.get("text", "") for c in context_chunks])

@@ -15,7 +15,7 @@ from app.ingestion.cleaner import TextCleaner
 from app.ingestion.chunkers.structural import StructuralChunker
 from app.ingestion.chunkers.sliding_window import SlidingWindowChunker
 from app.ingestion.chunkers.semantic import SemanticChunker
-from app.ingestion.embedder import Embedder
+from app.ingestion.embedder import make_embedder
 from app.ingestion.parsers.youtube_parser import (
     InvalidYouTubeURLError,
     TranscriptNotAvailableError,
@@ -45,7 +45,7 @@ class IngestionPipeline:
             overlap=settings.CHUNK_OVERLAP,
         )
         self.semantic_chunker = SemanticChunker()
-        self.embedder = Embedder(model_name=settings.EMBEDDING_MODEL)
+        self.embedder = make_embedder()
         self.vector_store = VectorStore()
         self.youtube_parser = YouTubeParser()
 

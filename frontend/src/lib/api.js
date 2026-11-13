@@ -1,9 +1,17 @@
 /**
  * API Client — handles all backend communication.
- * Uses Vite proxy in dev (/api → http://localhost:8000/api)
+ * Dev: Vite proxy (/api → http://localhost:8000/api). Hosted (Vercel): VITE_API_URL = backend origin.
  */
 
-const API_BASE = '/api';
+export const API_ROOT = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+export const API_BASE = `${API_ROOT}/api`;
+export const REPO_URL = 'https://github.com/prafulla2121/documind-rag';
+
+// FastAPI puts the reason in `detail`; show that instead of a bare status text.
+async function errorMessage(res, fallback) {
+  const data = await res.json().catch(() => ({}));
+  return typeof data.detail === 'string' ? data.detail : (res.statusText || fallback);
+}
 
 const getAuthHeaders = (headers = {}) => {
   const token = localStorage.getItem('token');
@@ -14,7 +22,6 @@ const getAuthHeaders = (headers = {}) => {
 };
 
 export const apiCall = async (endpoint, options = {}) => {
-  console.log(`[API] calling ${API_BASE}${endpoint}`);
   const headers = getAuthHeaders({
     'Content-Type': 'application/json',
     ...options.headers,
@@ -24,7 +31,7 @@ export const apiCall = async (endpoint, options = {}) => {
     ...options,
     headers,
   });
-  if (!res.ok) throw new Error(`API call failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'API call failed'));
   return res.json();
 }
 
@@ -40,7 +47,7 @@ export async function sendQuery(query, filters = {}, sessionId = null) {
     headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Query failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Query failed'));
   return res.json();
 }
 
@@ -58,7 +65,7 @@ export async function* streamQuery(query, filters = {}, sessionId = null, option
     signal: options.signal,
   });
 
-  if (!res.ok) throw new Error(`Query failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Query failed'));
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -97,7 +104,7 @@ export async function uploadFile(file) {
     headers: getAuthHeaders(),
     body: formData,
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Upload failed'));
   return res.json();
 }
 
@@ -115,7 +122,7 @@ export async function uploadMultipleFiles(files) {
     headers: getAuthHeaders(),
     body: formData,
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Upload failed'));
   return res.json();
 }
 
@@ -209,7 +216,7 @@ export async function deleteDocument(docId) {
     method: 'DELETE',
     headers: getAuthHeaders()
   });
-  if (!res.ok) throw new Error(`Failed to delete document: ${res.statusText}`);
+  if (!res.ok) throw new Error(await errorMessage(res, 'Failed to delete document'));
   return res.json();
 }
 
@@ -241,11 +248,21 @@ export async function getStats() {
  */
 export async function healthCheck() {
   try {
-    const res = await fetch('/health');
+    const res = await fetch(`${API_ROOT}/health`);
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Public demo settings (mode, upload cap, example questions). Also the wake-up probe:
+ * a sleeping free-tier server can take about a minute to answer the first request.
+ */
+export async function getDemoInfo({ timeoutMs = 20000 } = {}) {
+  const res = await fetch(`${API_BASE}/demo`, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`Server not ready (${res.status})`);
+  return res.json();
 }
 
 /**

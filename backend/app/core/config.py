@@ -5,7 +5,9 @@ All settings can be overridden via .env file or environment variables.
 from pydantic_settings import BaseSettings
 from pathlib import Path
 from typing import Optional, Any
+import logging
 import os
+import secrets
 
 # Resolve .env path relative to the project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -21,6 +23,13 @@ class Settings(BaseSettings):
     # --- Embeddings ---
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     EMBEDDING_BATCH_SIZE: int = 32
+    # "local" (sentence-transformers), "gemini" (API, no torch) or "hash" (keyless stub for tests).
+    # Empty = "local", or in DEMO_MODE "gemini" when GEMINI_API_KEY is set, else "hash".
+    EMBEDDING_PROVIDER: str = ""
+    GEMINI_API_KEY: str = ""
+    GEMINI_EMBEDDING_MODEL: str = "gemini-embedding-001"
+    GEMINI_EMBEDDING_DIM: int = 768
+    RERANKER_ENABLED: Optional[bool] = None  # None = on, except in DEMO_MODE (cross-encoder needs torch)
 
     # --- Qdrant (local file mode) ---
     QDRANT_PATH: str = str(PROJECT_ROOT / "data" / "qdrant_storage")
@@ -65,6 +74,12 @@ class Settings(BaseSettings):
     PLATFORM_LLM_API_KEY: str = ""
     PLATFORM_LLM_BASE_URL: str = ""
     LOG_FORMAT: str = "text"  # "json" for structured logs
+
+    # --- Public demo (Render backend + Vercel frontend) ---
+    DEMO_MODE: bool = False  # SQLite, sample doc preloaded, no server-side URL fetching, query rate limit
+    CORS_ORIGINS: str = ""  # extra allowed origins, comma-separated (e.g. the Vercel URL)
+    DEMO_QUERIES_PER_HOUR: int = 20  # per visitor IP (questions and uploads)
+    DEMO_QUERIES_PER_DAY: int = 300  # all visitors together; protects the free Gemini key
 
     @property
     def pgvector_dsn(self) -> str:
@@ -136,6 +151,33 @@ settings.UPLOAD_DIR = _resolve_project_path(settings.UPLOAD_DIR)
 settings.BM25_INDEX_PATH = _resolve_project_path(settings.BM25_INDEX_PATH)
 settings.SQLITE_DB_PATH = _resolve_project_path(settings.SQLITE_DB_PATH)
 settings.QDRANT_PATH = _prefer_existing_qdrant_path(settings.QDRANT_PATH)
+
+_PLACEHOLDER_SECRETS = {"change-in-production", "your-symmetric-encryption-key-here",
+                        "change-this-in-production-use-a-long-random-string"}
+for _name in ("SECRET_KEY", "ENCRYPTION_KEY"):
+    if getattr(settings, _name) in _PLACEHOLDER_SECRETS or not getattr(settings, _name):
+        if settings.DEMO_MODE:
+            # Demo data is wiped on restart anyway, so a per-boot random key is safe and never public.
+            setattr(settings, _name, secrets.token_urlsafe(48))
+            logging.getLogger(__name__).warning("%s not set: generated a random one for this run", _name)
+        else:
+            logging.getLogger(__name__).warning("%s is a placeholder value: set it before exposing this server", _name)
+
+if settings.DEMO_MODE and "DATABASE_URL" not in settings.model_fields_set:
+    settings.DATABASE_URL = f"sqlite+aiosqlite:///{settings.SQLITE_DB_PATH}"
+if settings.DEMO_MODE and "MAX_UPLOAD_MB" not in settings.model_fields_set:
+    settings.MAX_UPLOAD_MB = 5
+
+# One Gemini key serves both answers and embeddings.
+if settings.PLATFORM_LLM_PROVIDER == "gemini" and not settings.PLATFORM_LLM_API_KEY:
+    settings.PLATFORM_LLM_API_KEY = settings.GEMINI_API_KEY
+if not settings.EMBEDDING_PROVIDER:
+    settings.EMBEDDING_PROVIDER = ("gemini" if settings.GEMINI_API_KEY else "hash") if settings.DEMO_MODE else "local"
+if settings.EMBEDDING_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
+    logging.getLogger(__name__).warning("GEMINI_API_KEY is empty: using the keyword-hash stub embedder")
+    settings.EMBEDDING_PROVIDER = "hash"
+if settings.RERANKER_ENABLED is None:
+    settings.RERANKER_ENABLED = not settings.DEMO_MODE
 
 # Ensure data directories exist
 os.makedirs(settings.DATA_DIR, exist_ok=True)

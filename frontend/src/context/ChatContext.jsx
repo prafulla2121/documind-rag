@@ -122,7 +122,7 @@ export function ChatProvider({ children }) {
       setMessages(prev =>
         prev.map(m =>
           m.id === assistantId
-            ? { ...m, content: wasAborted ? 'Generation stopped.' : 'Error connecting to assistant.' }
+            ? { ...m, content: wasAborted ? 'Generation stopped.' : (error?.message || 'Error connecting to assistant.') }
             : m
         )
       );

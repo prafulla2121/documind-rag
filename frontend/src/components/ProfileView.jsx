@@ -62,7 +62,7 @@ export default function ProfileView() {
 
         <div className="profile-danger-zone">
           <h3>Session Management</h3>
-          <p style={{ color: '#666', fontSize: '14px', marginBottom: '16px' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '16px' }}>
             Logging out will clear your active session on this device.
           </p>
           <button onClick={logout} className="btn-signout">

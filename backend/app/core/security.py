@@ -49,6 +49,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
+async def block_in_demo():
+    """Routes that fetch user-given URLs, store keys/prompts shared by every anonymous visitor,
+    or delete shared data are off on the public demo (SSRF and abuse risk)."""
+    if settings.DEMO_MODE:
+        raise HTTPException(
+            status_code=403,
+            detail="Turned off in the public demo. Run DocuMind locally to use this feature.",
+        )
+
+
 async def get_admin_user(user=Depends(get_current_user)):
     if user["role"] != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")

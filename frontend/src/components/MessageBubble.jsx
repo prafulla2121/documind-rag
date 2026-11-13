@@ -21,36 +21,22 @@ export default function MessageBubble({ message, isLoading }) {
       .trim();
   }, [content, isUser]);
 
-  const avgScore = useMemo(() => {
-    if (!message.sources?.length) return 0;
-    return message.sources.reduce((acc, source) => acc + (source.score || 0), 0) / message.sources.length;
-  }, [message.sources]);
-  const confidenceLabel = avgScore > 0.3 ? 'Grounded' : message.sources?.length ? 'Low confidence' : 'No strong sources';
-
-  // Claude-style star icon (simplified as SVG)
-  const AiIcon = () => (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2L13.5 8.5L20 10L13.5 11.5L12 18L10.5 11.5L4 10L10.5 8.5L12 2Z" fill="#d97757"/>
-      <path d="M18 4L18.5 6L20.5 6.5L18.5 7L18 9L17.5 7L15.5 6.5L17.5 6L18 4Z" fill="#d97757"/>
-    </svg>
-  );
+  // Scores are raw RRF or cross-encoder values (different scales), so state the source count, not a confidence.
+  const sourceCount = message.sources?.length || 0;
+  const confidenceLabel = sourceCount
+    ? `Based on ${sourceCount} source section${sourceCount > 1 ? 's' : ''}`
+    : 'No matching sources';
 
   return (
     <div className="message-container">
       <div className={`message ${message.role}`}>
         <div className="message-avatar">
-          {isUser ? (
-            <div className="avatar" style={{width: '24px', height: '24px', fontSize: '10px'}}>U</div>
-          ) : (
-            <AiIcon />
-          )}
+          <div className={`avatar avatar-sm ${isUser ? '' : 'avatar-ai'}`} aria-hidden="true">{isUser ? 'You' : 'DM'}</div>
         </div>
         <div className="message-content">
             {isStreaming ? (
               <div className="typing-indicator">
-                <span style={{ color: '#999', fontStyle: 'italic', fontSize: '14px' }}>
-                  RagSystem is thinking...
-                </span>
+                <span className="thinking-text">Searching the documents…</span>
               </div>
             ) : (
               <div className="markdown-content">
@@ -75,27 +61,39 @@ export default function MessageBubble({ message, isLoading }) {
                     }
                   }}
                 >
-                  {displayContent || "RagSystem is thinking..."}
+                  {displayContent || "Searching the documents…"}
                 </ReactMarkdown>
               </div>
             )}
             {!isUser && (
-              <div className={`answer-confidence ${confidenceLabel === 'Grounded' ? 'grounded' : confidenceLabel === 'Low confidence' ? 'low' : 'none'}`}>
+              <div className={`answer-confidence ${sourceCount ? 'grounded' : 'none'}`}>
                 {confidenceLabel}
               </div>
             )}
 
-            {/* Sources styled as Claude-style Artifact Cards */}
             {!isUser && message.sources && message.sources.length > 0 && (
               <div className="sources-area">
                 <div className="sources-heading">Sources</div>
                 {message.sources.map((source, idx) => (
-                  <div key={idx} className="source-card" onClick={() => setSelectedSource(source)} role="button" tabIndex={0}>
-                    <div className="source-card-icon">{source.source_type === 'youtube' ? 'YT' : 'DOC'}</div>
+                  <div
+                    key={idx}
+                    className={`source-card ${selectedSource === source ? 'selected' : ''}`}
+                    onClick={() => setSelectedSource(source)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedSource(source); } }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Show source ${source.index}`}
+                  >
                     <div className="source-card-info">
                       <SourceCitation source={source} />
+                      {source.excerpt && source.source_type !== 'youtube' && (
+                        <div className="source-card-excerpt">{source.excerpt.replace(/^#+\s.*\n+/, '')}</div>
+                      )}
                       <div className="source-card-type">
-                        {source.source_type === 'youtube' ? (source.channel_name || 'YouTube transcript') : 'Knowledge Base Source'}
+                        {source.source_type === 'youtube'
+                          ? (source.channel_name || 'YouTube transcript')
+                          : [source.filename, source.retrieval_methods?.length ? `found by ${source.retrieval_methods.join(' + ')}` : '']
+                              .filter(Boolean).join(' · ')}
                       </div>
                     </div>
                   </div>
@@ -126,7 +124,7 @@ export default function MessageBubble({ message, isLoading }) {
                   </div>
                 )}
                 {selectedSource.section && (
-                  <div className="source-detail-section">Section: {selectedSource.section}</div>
+                  <div className="source-detail-section">Section: {selectedSource.section.replace(/^#+\s*/, '')}</div>
                 )}
                 {selectedSource.retrieval_methods?.length > 0 && (
                   <div className="source-detail-section">Retrieved via: {selectedSource.retrieval_methods.join(', ')}</div>
